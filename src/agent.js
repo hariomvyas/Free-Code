@@ -15,16 +15,32 @@ export class Agent {
     this.logFile = path.join(LOG_DIR, `${Date.now()}.jsonl`);
   }
 
-  async send(userText, { onToolCall, onDenied } = {}) {
+  async send(userText, hooks = {}) {
+    const {
+      onThinkStart,
+      onToken,
+      onThinkEnd,
+      onToolCall,
+      onToolResult,
+      onDenied,
+    } = hooks;
+
     this.messages.push({ role: "user", content: userText });
 
     for (let i = 0; i < this.config.maxIterations; i++) {
+      onThinkStart?.(i + 1);
+      let tokenCount = 0;
       const assistantMsg = await chat({
         host: this.config.host,
         model: this.config.model,
         messages: this.messages,
         timeoutMs: this.config.requestTimeoutMs,
+        onToken: (piece) => {
+          tokenCount++;
+          onToken?.(piece, tokenCount);
+        },
       });
+      onThinkEnd?.(tokenCount);
       this.messages.push(assistantMsg);
       await this._log(assistantMsg);
 
@@ -45,17 +61,21 @@ export class Agent {
       onToolCall?.(toolName, args);
 
       let resultText;
+      let ok = true;
       if (isMutating(toolName) && !(await this.permissionGate.check(toolName, args))) {
         onDenied?.(toolName);
         resultText = JSON.stringify({ error: "Permission denied by user." });
+        ok = false;
       } else {
         try {
           const result = await executeTool(toolName, args);
           resultText = JSON.stringify(result);
         } catch (err) {
           resultText = JSON.stringify({ error: err.message });
+          ok = false;
         }
       }
+      onToolResult?.(toolName, resultText, ok);
 
       const toolMsg = { role: "user", content: `[tool_result:${toolName}] ${resultText}` };
       this.messages.push(toolMsg);

@@ -98,9 +98,22 @@ to run if either is missing.
 
 | Command | Effect |
 |---|---|
-| `/model <name>` | Switch model for the rest of the session |
+| `/model <name>` | Switch model for the rest of the session (must be installed) |
+| `/models` | List installed Ollama models |
 | `/reset` | Clear conversation history, start fresh |
 | `exit` / `quit` | Quit |
+
+## Automatic model selection
+
+You don't have to pick a model. On startup Free Code scans your installed Ollama
+models and automatically uses the **strongest coder model you have**, in this order:
+
+```
+qwen2.5-coder:14b  →  qwen2.5-coder:7b  →  qwen2.5-coder:3b  →  qwen2.5-coder:1.5b
+```
+
+So if you've pulled the 7B, `fcode` uses it; if you only have the 3B, it uses that.
+Pin a specific model any time with the `FREECODE_MODEL` environment variable.
 
 ## Configuration
 
@@ -108,7 +121,7 @@ Set these as environment variables before running `fcode`:
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `FREECODE_MODEL` | `qwen2.5-coder:3b` | Which Ollama model to use |
+| `FREECODE_MODEL` | _(auto-selected)_ | Force a specific Ollama model |
 | `FREECODE_HOST` | `http://127.0.0.1:11434` | Ollama server address |
 
 ```bash
@@ -119,8 +132,15 @@ FREECODE_MODEL=qwen2.5-coder:7b fcode
 
 | RAM available | Recommended model | Notes |
 |---|---|---|
-| 8GB (CPU only) | `qwen2.5-coder:3b` (default) | ~2GB on disk, fastest, best fit for tight RAM |
-| 16GB+ or 8GB GPU | `qwen2.5-coder:7b` | Stronger coding quality, needs more headroom |
+| 8GB (CPU only) | `qwen2.5-coder:3b` | ~2GB on disk, fastest, fits tight RAM — but skips steps on complex multi-file tasks |
+| 16GB+ or 8GB GPU | **`qwen2.5-coder:7b`** ⭐ | Reliably builds complete multi-file solutions; slower per token on CPU |
+
+> **Note:** the 3B model is light and fast but will sometimes skip steps or answer
+> without actually running a tool on complex, multi-part tasks. If it isn't building
+> what you ask, pull the 7B — it's dramatically more reliable at multi-step work:
+> ```bash
+> ollama pull qwen2.5-coder:7b
+> ```
 
 Avoid "thinking"/hybrid-reasoning models (e.g. `qwen3`) for this use case — they burn hundreds
 of extra tokens reasoning before every single tool call, which makes the agent loop painfully
@@ -156,13 +176,20 @@ output mode to force every model response into a strict, parseable envelope, whi
 far more reliable on 3B-class models than hoping the model's `tool_calls` field populates
 correctly.
 
+Responses are **streamed live** — you see a spinner with elapsed time and token
+count while the model thinks, each tool call as it happens (`🔧 write_file …`),
+a one-line summary of every tool result (`✓ wrote 43 bytes`), and finally the
+answer. You always know what Free Code is doing.
+
 ## Project layout
 
 ```
-bin/freecode.js     entrypoint
-src/cli.js          interactive REPL
+bin/freecode.js      entrypoint
+src/cli.js           interactive REPL + live display wiring
 src/agent.js         tool-call loop
-src/llm.js           Ollama client
+src/llm.js           streaming Ollama client
+src/ui.js            spinner + tool-activity display
+src/config.js        auto model-selection
 src/permission.js    permission gate
 src/systemPrompt.js  system prompt + tool docs
 src/tools/           read_file, write_file, edit_file, bash, grep, glob
@@ -170,7 +197,8 @@ src/tools/           read_file, write_file, edit_file, bash, grep, glob
 
 ## Roadmap
 
-- [ ] Streaming output
+- [x] Streaming output with live progress
+- [x] Automatic best-model selection
 - [ ] Context compaction for long sessions
 - [ ] One-line install script (auto-pulls model on first run)
 - [ ] TUI (richer terminal UI)
