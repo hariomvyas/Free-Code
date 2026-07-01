@@ -65,6 +65,16 @@ fcode> Added email/password validation to login() in src/auth.js.
 | `browser` | Open a URL in a real headless browser (needs Playwright) |
 | _MCP tools_ | Anything exposed by your configured MCP servers |
 
+## Interface
+
+`fcode` launches a **full-screen TUI** when run in a real terminal: a scrollable
+transcript, a fixed input bar with line editing and history (↑/↓), a live status
+line (spinner + elapsed + token count), `PgUp`/`PgDn` to scroll back, and inline
+permission prompts. `Ctrl+C` quits.
+
+Prefer a plain scrolling REPL? Run `fcode --classic`. Piped/non-interactive input
+(`echo "..." | fcode`) automatically uses classic mode and processes each line.
+
 ## Requirements
 
 - **[Node.js](https://nodejs.org) 18+**
@@ -296,6 +306,8 @@ src/session.js       session persistence
 src/mcp.js           MCP stdio client
 src/toolRegistry.js  built-in + MCP tool registry
 src/diagnostics.js   post-edit syntax checks
+src/tui.js           full-screen TUI (composeFrame + runner)
+src/ui.js            classic-mode panels + rendering
 src/permission.js    permission gate
 src/systemPrompt.js  system prompt + tool docs
 src/tools/           files, shell, search, ls, web_search, web_fetch, browser
@@ -309,9 +321,10 @@ src/tools/           files, shell, search, ls, web_search, web_fetch, browser
 - [x] Session persistence (save / resume)
 - [x] MCP tool server support
 - [x] Diagnostics after edits
+- [x] Full-screen TUI
 - [ ] Context compaction for long sessions
 - [ ] One-line install script (auto-pulls model on first run)
-- [ ] TUI (richer terminal UI)
+- [ ] Subagents (parallel task delegation)
 
 ## Contributing
 

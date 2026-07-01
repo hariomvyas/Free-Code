@@ -2,8 +2,9 @@ import fs from "node:fs/promises";
 import { PERMISSIONS_FILE, PROJECT_DIR } from "./config.js";
 
 export class PermissionGate {
-  constructor(rl) {
-    this.rl = rl;
+  // ask: async (promptText, argsPreview) => string   (user's answer)
+  constructor(ask) {
+    this.ask = ask;
     this.sessionAllow = new Set();
     this.persisted = {};
   }
@@ -21,10 +22,10 @@ export class PermissionGate {
     if (this.sessionAllow.has(toolName)) return true;
 
     const preview = JSON.stringify(args, null, 2).slice(0, 500);
-    console.log(`\n[permission] tool "${toolName}" wants to run with args:\n${preview}`);
     const answer = (
-      await this.rl.question(
-        `Allow? [y]es once / [a]lways this session / [A]lways (save to project) / [n]o: `
+      await this.ask(
+        `Allow "${toolName}"? [y]es once / [a]lways session / [A]lways (save) / [n]o`,
+        preview
       )
     ).trim();
 
@@ -38,9 +39,7 @@ export class PermissionGate {
       await this.save();
       return true;
     }
-    if (answer.toLowerCase() === "y") {
-      return true;
-    }
+    if (answer.toLowerCase() === "y") return true;
     return false;
   }
 
