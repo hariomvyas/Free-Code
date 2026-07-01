@@ -4,6 +4,7 @@ import { DEFAULT_CONFIG, pickModel } from "./config.js";
 import { PermissionGate } from "./permission.js";
 import { Agent } from "./agent.js";
 import { Session } from "./session.js";
+import { ToolRegistry } from "./toolRegistry.js";
 import { LLMError, checkOllama, runningModels } from "./llm.js";
 import { Spinner, printToolCall, printToolResult, printAnswer, color } from "./ui.js";
 
@@ -33,12 +34,19 @@ export async function main() {
   const permissionGate = new PermissionGate(rl);
   await permissionGate.load();
 
-  let agent = new Agent({ config, permissionGate });
+  // Start any MCP servers declared in .freecode/mcp.json and merge their tools.
+  const registry = new ToolRegistry();
+  const mcpSummary = await registry.loadMcpServers((line) => console.log(color("gray", `  ${line}`)));
+
+  let agent = new Agent({ config, permissionGate, toolRegistry: registry });
 
   console.log(color("bold", `Free Code v0.1.0`) + color("gray", ` — model: ${config.model}  host: ${config.host}`));
   console.log(color("gray", `cwd: ${process.cwd()}`));
   console.log(color("gray", `session: ${agent.session.id}`));
-  console.log(color("gray", `commands: /model <name>  /models  /gpu  /sessions  /resume <id>  /reset  exit\n`));
+  if (mcpSummary.length) {
+    console.log(color("gray", `mcp servers: ${mcpSummary.map((s) => s.server).join(", ")}`));
+  }
+  console.log(color("gray", `commands: /model <name>  /models  /gpu  /tools  /sessions  /resume <id>  /reset  exit\n`));
 
   while (true) {
     let raw;
@@ -69,7 +77,7 @@ export async function main() {
       const id = input.slice("/resume ".length).trim();
       try {
         const loaded = await Session.load(id);
-        agent = new Agent({ config, permissionGate, session: loaded });
+        agent = new Agent({ config, permissionGate, session: loaded, toolRegistry: registry });
         console.log(color("gray", `(resumed ${id} — ${loaded.messages.length} messages)`));
       } catch {
         console.log(color("yellow", `couldn't load session "${id}" — check /sessions for valid ids`));
@@ -77,8 +85,12 @@ export async function main() {
       continue;
     }
     if (input === "/reset") {
-      agent = new Agent({ config, permissionGate });
+      agent = new Agent({ config, permissionGate, toolRegistry: registry });
       console.log(color("gray", `(new session ${agent.session.id})`));
+      continue;
+    }
+    if (input === "/tools") {
+      console.log(color("gray", agent._describeTools()));
       continue;
     }
     if (input === "/models") {

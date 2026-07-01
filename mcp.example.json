@@ -1,0 +1,13 @@
+{
+  "_comment": "Copy this to .freecode/mcp.json to enable MCP tool servers. Each server is spawned over stdio; its tools become available to the model as <server>__<tool>.",
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "."]
+    },
+    "git": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-git", "--repository", "."]
+    }
+  }
+}

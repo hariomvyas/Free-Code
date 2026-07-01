@@ -101,6 +101,9 @@ to run if either is missing.
 | `/model <name>` | Switch model for the rest of the session (must be installed) |
 | `/models` | List installed Ollama models |
 | `/gpu` | Show whether the current model is running on GPU or CPU |
+| `/tools` | List all tools available (built-in + MCP) |
+| `/sessions` | List saved sessions |
+| `/resume <id>` | Resume a saved session |
 | `/reset` | Clear conversation history, start fresh |
 | `exit` / `quit` | Quit |
 
@@ -218,6 +221,34 @@ count while the model thinks, each tool call as it happens (`🔧 write_file …
 a one-line summary of every tool result (`✓ wrote 43 bytes`), and finally the
 answer. You always know what Free Code is doing.
 
+## Sessions
+
+Every conversation is auto-saved to `.freecode/sessions/<id>.json` after each turn.
+
+| Command | Effect |
+|---|---|
+| `/sessions` | List saved sessions (id, turns, model, title) |
+| `/resume <id>` | Resume a previous session with full history |
+| `/reset` | Start a fresh session |
+
+## MCP tool servers
+
+Free Code can connect to [MCP](https://modelcontextprotocol.io) servers and expose
+their tools to the model alongside the built-ins. Copy `mcp.example.json` to
+`.freecode/mcp.json` and list your servers:
+
+```json
+{
+  "mcpServers": {
+    "filesystem": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "."] }
+  }
+}
+```
+
+On startup each server is spawned over stdio and its tools are registered as
+`<server>__<tool>` (e.g. `filesystem__read_file`). MCP tools are permission-gated
+by default. Use `/tools` in a session to see every tool currently available.
+
 ## Project layout
 
 ```
@@ -226,7 +257,10 @@ src/cli.js           interactive REPL + live display wiring
 src/agent.js         tool-call loop
 src/llm.js           streaming Ollama client
 src/ui.js            spinner + tool-activity display
-src/config.js        auto model-selection
+src/config.js        auto model-selection + perf knobs
+src/session.js       session persistence
+src/mcp.js           MCP stdio client
+src/toolRegistry.js  built-in + MCP tool registry
 src/permission.js    permission gate
 src/systemPrompt.js  system prompt + tool docs
 src/tools/           read_file, write_file, edit_file, bash, grep, glob
@@ -236,6 +270,10 @@ src/tools/           read_file, write_file, edit_file, bash, grep, glob
 
 - [x] Streaming output with live progress
 - [x] Automatic best-model selection
+- [x] GPU acceleration + full hardware use
+- [x] Session persistence (save / resume)
+- [x] MCP tool server support
+- [ ] LSP diagnostics after edits
 - [ ] Context compaction for long sessions
 - [ ] One-line install script (auto-pulls model on first run)
 - [ ] TUI (richer terminal UI)
