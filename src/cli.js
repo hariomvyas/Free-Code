@@ -160,6 +160,7 @@ async function runTui({ config, registry, mcpSummary }) {
         onDiagnostics: (_n, errors) => tui.println(c("yellow", "  ⚠ " + errors.split("\n")[0])),
         onDenied: (name) => tui.println(c("yellow", "  ✗ " + name + " denied")),
         onCompact: (n) => tui.println(color("gray", `  ⟳ compacting ${n} older messages…`)),
+        onSubagent: (desc) => tui.println(c("blue", "🤖 subagent: ") + desc),
       });
       tui.println(c("green", "◆ ") + reply);
     },
@@ -202,6 +203,7 @@ function runTurnHooks() {
     onDiagnostics: (_n, errors) => console.log(`   ${color("yellow", "⚠ diagnostics: " + errors.split("\n")[0])}`),
     onDenied: (name) => console.log(`   ${color("yellow", "✗ " + name + " denied")}`),
     onCompact: (n) => console.log(color("gray", `   ⟳ compacting ${n} older messages…`)),
+    onSubagent: (desc) => console.log(color("blue", "🤖 subagent: ") + color("gray", desc)),
     _stop: () => spinner?.end(),
   };
 }

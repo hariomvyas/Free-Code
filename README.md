@@ -63,7 +63,17 @@ fcode> Added email/password validation to login() in src/auth.js.
 | `web_search` | Search the web via DuckDuckGo (no API key) |
 | `web_fetch` | Fetch a URL and return readable text |
 | `browser` | Open a URL in a real headless browser (needs Playwright) |
+| `task` | Delegate a focused subtask to a fresh subagent with its own context |
 | _MCP tools_ | Anything exposed by your configured MCP servers |
+
+### Subagents
+
+The model can call `task(description, prompt)` to spawn a **subagent** — a fresh
+agent with its own separate context and the same tools. The subagent runs the
+delegated prompt to completion and returns a concise report, which keeps the main
+conversation's context small during big research or multi-step chunks. Subagents
+can't spawn their own subagents (no infinite recursion). You'll see
+`🤖 subagent: …` when one starts, with its steps indented (`⤷`).
 
 ## Interface
 
@@ -348,7 +358,7 @@ src/tools/           files, shell, search, ls, web_search, web_fetch, browser
 - [x] Context compaction for long sessions
 - [x] One-line install script (auto-pulls model on first run)
 - [x] Auto-update on launch
-- [ ] Subagents (parallel task delegation)
+- [x] Subagents (task delegation)
 
 ## Contributing
 

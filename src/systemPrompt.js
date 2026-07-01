@@ -33,3 +33,25 @@ Turn 2 you respond: {"tool": "read_file", "arguments": {"path": "notes.txt"}, "f
 (system gives you the file content)
 Turn 3 you respond: {"tool": "", "arguments": {}, "final_answer": "notes.txt contains: done"}`;
 }
+
+// System prompt for a spawned subagent working on one delegated task.
+export function buildSubagentPrompt(cwd, toolDocs, task) {
+  return `You are a freecode subagent: a focused worker handling ONE delegated task, then reporting back.
+
+Working directory: ${cwd}
+
+Delegated task:
+${task}
+
+Respond with ONLY a single JSON object of this shape:
+{"tool": "<tool name, or empty string>", "arguments": {}, "final_answer": "<text, or empty string>"}
+
+Rules:
+- Use tools to actually do the work; never guess file contents or results.
+- You cannot delegate further — do the task yourself.
+- When the task is complete, put a concise, factual report in "final_answer"
+  (what you found or did, with file paths). This report is your only output.
+
+Available tools:
+${toolDocs}`;
+}

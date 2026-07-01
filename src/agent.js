@@ -2,18 +2,25 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { chat, complete, LLMError } from "./llm.js";
 import { executeTool, isMutating, describeTools } from "./tools/index.js";
-import { buildSystemPrompt } from "./systemPrompt.js";
+import { buildSystemPrompt, buildSubagentPrompt } from "./systemPrompt.js";
 import { LOG_DIR } from "./config.js";
 import { Session } from "./session.js";
 import { checkFile } from "./diagnostics.js";
 
+const TASK_DOC =
+  "\n- task(description: string, prompt: string) — Delegate a focused subtask to a fresh subagent " +
+  "that has its own context and the same tools. It runs the prompt to completion and returns a " +
+  "concise report. Use for self-contained research or multi-step chunks to keep your own context small.";
+
 export class Agent {
-  constructor({ config, permissionGate, session, toolRegistry }) {
+  constructor({ config, permissionGate, session, toolRegistry, allowSubagents = true }) {
     this.config = config;
     this.permissionGate = permissionGate;
     this.session = session || new Session({ model: config.model });
     // Optional extra tools (e.g. from MCP servers) merged with built-ins.
     this.toolRegistry = toolRegistry || null;
+    // Children run with allowSubagents=false to prevent infinite recursion.
+    this.allowSubagents = allowSubagents;
 
     if (this.session.messages.length === 0) {
       this.session.messages.push({
@@ -30,8 +37,8 @@ export class Agent {
   }
 
   _describeTools() {
-    if (this.toolRegistry) return this.toolRegistry.describe();
-    return describeTools();
+    const base = this.toolRegistry ? this.toolRegistry.describe() : describeTools();
+    return this.allowSubagents ? base + TASK_DOC : base;
   }
 
   async _execTool(name, args) {
@@ -84,6 +91,22 @@ export class Agent {
 
         const args = envelope.arguments || {};
         onToolCall?.(toolName, args);
+
+        // Subagent delegation: run a child agent and feed its report back.
+        if (toolName === "task" && this.allowSubagents) {
+          let resultText;
+          try {
+            const report = await this._runSubagent(args, hooks);
+            resultText = JSON.stringify({ report });
+          } catch (err) {
+            resultText = JSON.stringify({ error: err.message });
+          }
+          onToolResult?.(toolName, resultText, true);
+          const toolMsg = { role: "user", content: `[tool_result:task] ${resultText}` };
+          this.messages.push(toolMsg);
+          await this._log(toolMsg);
+          continue;
+        }
 
         let resultText;
         let ok = true;
@@ -175,6 +198,39 @@ export class Agent {
       { role: "user", content: `[earlier conversation summary]\n${summary.trim()}` },
       ...tail,
     ];
+  }
+
+  // Spawns a child Agent with its own context to complete one delegated task,
+  // returning its final report. The child can't spawn further subagents.
+  async _runSubagent(args, hooks = {}) {
+    const description = args.description || "subtask";
+    const prompt = args.prompt || args.description || "";
+    if (!prompt) throw new Error("task requires a 'prompt'");
+
+    hooks.onSubagent?.(description);
+
+    const childSession = new Session({ model: this.config.model });
+    childSession.messages.push({
+      role: "system",
+      content: buildSubagentPrompt(process.cwd(), this._describeTools(), prompt),
+    });
+
+    const child = new Agent({
+      config: this.config,
+      permissionGate: this.permissionGate,
+      session: childSession,
+      toolRegistry: this.toolRegistry,
+      allowSubagents: false,
+    });
+
+    // Forward the child's activity to the parent UI, indented.
+    const report = await child.send(prompt, {
+      onToolCall: (name, a) => hooks.onToolCall?.("⤷ " + name, a),
+      onToolResult: (name, r, ok) => hooks.onToolResult?.(name, r, ok),
+      onDenied: (name) => hooks.onDenied?.(name),
+      onDiagnostics: (name, e) => hooks.onDiagnostics?.(name, e),
+    });
+    return report;
   }
 
   async _log(msg) {
