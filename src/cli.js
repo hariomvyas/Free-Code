@@ -6,7 +6,7 @@ import { Agent } from "./agent.js";
 import { Session } from "./session.js";
 import { ToolRegistry } from "./toolRegistry.js";
 import { LLMError, checkOllama, runningModels } from "./llm.js";
-import { Spinner, printToolCall, printToolResult, printAnswer, color } from "./ui.js";
+import { Spinner, printToolCall, printToolResult, printAnswer, printBanner, color } from "./ui.js";
 
 export async function main() {
   const config = { ...DEFAULT_CONFIG };
@@ -40,13 +40,19 @@ export async function main() {
 
   let agent = new Agent({ config, permissionGate, toolRegistry: registry });
 
-  console.log(color("bold", `Free Code v0.1.0`) + color("gray", ` — model: ${config.model}  host: ${config.host}`));
-  console.log(color("gray", `cwd: ${process.cwd()}`));
-  console.log(color("gray", `session: ${agent.session.id}`));
-  if (mcpSummary.length) {
-    console.log(color("gray", `mcp servers: ${mcpSummary.map((s) => s.server).join(", ")}`));
-  }
-  console.log(color("gray", `commands: /model <name>  /models  /gpu  /tools  /sessions  /resume <id>  /reset  exit\n`));
+  printBanner({
+    version: "0.1.0",
+    model: config.model,
+    host: config.host,
+    cwd: process.cwd(),
+    session: agent.session.id,
+    mcp: mcpSummary.length ? mcpSummary.map((s) => s.server).join(", ") : null,
+  });
+  console.log(
+    color("gray", "commands: ") +
+      color("dim", "/model  /models  /gpu  /tools  /sessions  /resume <id>  /reset  exit") +
+      "\n"
+  );
 
   while (true) {
     let raw;

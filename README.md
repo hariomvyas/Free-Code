@@ -40,12 +40,30 @@ fcode> Added email/password validation to login() in src/auth.js.
 
 | | |
 |---|---|
-| 🔒 **Fully offline** | No API keys, no network calls except to your local Ollama server |
+| 🧠 **Local model** | Runs on your own machine via Ollama — no API keys for the LLM |
 | 🪶 **Runs on 8GB RAM** | Default model is a 3B quantized coder model (~2GB on disk) |
-| 🛠️ **Real tools** | `read_file`, `write_file`, `edit_file`, `bash`, `grep`, `glob` |
-| ✅ **Permission-gated** | Confirms before writes, edits, or shell commands — "always allow" persists per project |
-| 📝 **Debuggable** | Every session's full tool-call transcript logged to `.freecode/logs/` |
-| 📦 **Zero dependencies** | Pure Node.js standard library — nothing to `npm install` |
+| 🛠️ **Rich toolset** | files, shell, search, **web search + fetch**, optional real browser |
+| 🌐 **Internet access** | `web_search` (no API key) and `web_fetch` read live web pages |
+| 🔌 **MCP servers** | Plug in any Model Context Protocol tool server |
+| 💾 **Sessions** | Auto-saved conversations you can list and resume |
+| 🩺 **Diagnostics** | Auto syntax-checks code the model writes and feeds back errors |
+| 🎨 **Rich TUI** | Boxed panels, colored diffs, live spinner, per-tool icons |
+| ✅ **Permission-gated** | Confirms before writes, edits, or shell commands — persists per project |
+| 📦 **Zero dependencies** | Pure Node.js standard library — nothing to `npm install`* |
+
+<sub>*the optional `browser` tool uses Playwright, installed only if you want JS-rendered browsing.</sub>
+
+### Tools
+
+| Tool | What it does |
+|---|---|
+| `read_file` / `write_file` / `edit_file` / `multi_edit` | Read and modify files |
+| `ls` / `glob` / `grep` | Explore and search the project |
+| `bash` | Run shell commands (permission-gated) |
+| `web_search` | Search the web via DuckDuckGo (no API key) |
+| `web_fetch` | Fetch a URL and return readable text |
+| `browser` | Open a URL in a real headless browser (needs Playwright) |
+| _MCP tools_ | Anything exposed by your configured MCP servers |
 
 ## Requirements
 
@@ -280,7 +298,7 @@ src/toolRegistry.js  built-in + MCP tool registry
 src/diagnostics.js   post-edit syntax checks
 src/permission.js    permission gate
 src/systemPrompt.js  system prompt + tool docs
-src/tools/           read_file, write_file, edit_file, bash, grep, glob
+src/tools/           files, shell, search, ls, web_search, web_fetch, browser
 ```
 
 ## Roadmap
