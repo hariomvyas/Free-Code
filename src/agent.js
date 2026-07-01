@@ -5,6 +5,7 @@ import { executeTool, isMutating, describeTools } from "./tools/index.js";
 import { buildSystemPrompt } from "./systemPrompt.js";
 import { LOG_DIR } from "./config.js";
 import { Session } from "./session.js";
+import { checkFile } from "./diagnostics.js";
 
 export class Agent {
   constructor({ config, permissionGate, session, toolRegistry }) {
@@ -44,7 +45,7 @@ export class Agent {
   }
 
   async send(userText, hooks = {}) {
-    const { onThinkStart, onToken, onThinkEnd, onToolCall, onToolResult, onDenied } = hooks;
+    const { onThinkStart, onToken, onThinkEnd, onToolCall, onToolResult, onDenied, onDiagnostics } = hooks;
 
     this.messages.push({ role: "user", content: userText });
 
@@ -92,6 +93,18 @@ export class Agent {
         } else {
           try {
             const result = await this._execTool(toolName, args);
+            // After a successful write/edit, run diagnostics so the model gets
+            // immediate feedback on broken code and can fix it next turn.
+            if ((toolName === "write_file" || toolName === "edit_file") && result?.path) {
+              const diag = await checkFile(result.path).catch(() => null);
+              if (diag?.checked && !diag.ok) {
+                result.diagnostics = `FAILED CHECK — fix these errors:\n${diag.errors}`;
+                ok = false;
+                onDiagnostics?.(toolName, diag.errors);
+              } else if (diag?.checked && diag.ok) {
+                result.diagnostics = "ok (no syntax errors)";
+              }
+            }
             resultText = JSON.stringify(result);
           } catch (err) {
             resultText = JSON.stringify({ error: err.message });

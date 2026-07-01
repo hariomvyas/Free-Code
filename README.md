@@ -249,6 +249,22 @@ On startup each server is spawned over stdio and its tools are registered as
 `<server>__<tool>` (e.g. `filesystem__read_file`). MCP tools are permission-gated
 by default. Use `/tools` in a session to see every tool currently available.
 
+## Diagnostics after edits
+
+When the model writes or edits a source file, Free Code automatically runs a fast
+syntax check for that language and feeds any errors back into the conversation, so
+the model fixes broken code on the next turn instead of leaving it. Dependency-free
+and offline — it uses tools you already have:
+
+| Language | Checker |
+|---|---|
+| JavaScript (`.js/.mjs/.cjs`) | `node --check` |
+| JSON | `JSON.parse` |
+| Python (`.py`) | `python -m py_compile` (if `python` is installed) |
+| TypeScript (`.ts/.tsx`) | `tsc --noEmit` (if `tsc` is installed) |
+
+You'll see `⚠ diagnostics: …` in the output when a check fails.
+
 ## Project layout
 
 ```
@@ -261,6 +277,7 @@ src/config.js        auto model-selection + perf knobs
 src/session.js       session persistence
 src/mcp.js           MCP stdio client
 src/toolRegistry.js  built-in + MCP tool registry
+src/diagnostics.js   post-edit syntax checks
 src/permission.js    permission gate
 src/systemPrompt.js  system prompt + tool docs
 src/tools/           read_file, write_file, edit_file, bash, grep, glob
@@ -273,7 +290,7 @@ src/tools/           read_file, write_file, edit_file, bash, grep, glob
 - [x] GPU acceleration + full hardware use
 - [x] Session persistence (save / resume)
 - [x] MCP tool server support
-- [ ] LSP diagnostics after edits
+- [x] Diagnostics after edits
 - [ ] Context compaction for long sessions
 - [ ] One-line install script (auto-pulls model on first run)
 - [ ] TUI (richer terminal UI)

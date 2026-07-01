@@ -141,6 +141,8 @@ export async function main() {
         },
         onToolCall: (name, args) => printToolCall(name, args),
         onToolResult: (name, resultText, ok) => printToolResult(name, resultText, ok),
+        onDiagnostics: (_name, errors) =>
+          console.log(`   ${color("yellow", "⚠ diagnostics: " + errors.split("\n")[0])}`),
         onDenied: (name) => console.log(`   ${color("yellow", "✗ " + name + " denied")}`),
       });
       printAnswer(reply);
