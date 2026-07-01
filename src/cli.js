@@ -3,6 +3,7 @@ import { stdin, stdout } from "node:process";
 import { DEFAULT_CONFIG, pickModel } from "./config.js";
 import { PermissionGate } from "./permission.js";
 import { Agent } from "./agent.js";
+import { Session } from "./session.js";
 import { LLMError, checkOllama, runningModels } from "./llm.js";
 import { Spinner, printToolCall, printToolResult, printAnswer, color } from "./ui.js";
 
@@ -36,7 +37,8 @@ export async function main() {
 
   console.log(color("bold", `Free Code v0.1.0`) + color("gray", ` — model: ${config.model}  host: ${config.host}`));
   console.log(color("gray", `cwd: ${process.cwd()}`));
-  console.log(color("gray", `commands: /model <name>  /models  /gpu  /reset  exit\n`));
+  console.log(color("gray", `session: ${agent.session.id}`));
+  console.log(color("gray", `commands: /model <name>  /models  /gpu  /sessions  /resume <id>  /reset  exit\n`));
 
   while (true) {
     let raw;
@@ -49,9 +51,34 @@ export async function main() {
     const input = raw.trim();
     if (!input) continue;
     if (input === "exit" || input === "quit") break;
+    if (input === "/sessions") {
+      const sessions = await Session.list();
+      if (!sessions.length) {
+        console.log(color("gray", "no saved sessions yet"));
+      } else {
+        for (const s of sessions.slice(0, 20)) {
+          console.log(
+            color("cyan", s.id) +
+              color("gray", `  ${s.turns} turn(s)  ${s.model || "?"}  — ${s.title}`)
+          );
+        }
+      }
+      continue;
+    }
+    if (input.startsWith("/resume ")) {
+      const id = input.slice("/resume ".length).trim();
+      try {
+        const loaded = await Session.load(id);
+        agent = new Agent({ config, permissionGate, session: loaded });
+        console.log(color("gray", `(resumed ${id} — ${loaded.messages.length} messages)`));
+      } catch {
+        console.log(color("yellow", `couldn't load session "${id}" — check /sessions for valid ids`));
+      }
+      continue;
+    }
     if (input === "/reset") {
       agent = new Agent({ config, permissionGate });
-      console.log(color("gray", "(session reset)"));
+      console.log(color("gray", `(new session ${agent.session.id})`));
       continue;
     }
     if (input === "/models") {
