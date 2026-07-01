@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { chat, LLMError } from "./llm.js";
+import { chat, complete, LLMError } from "./llm.js";
 import { executeTool, isMutating, describeTools } from "./tools/index.js";
 import { buildSystemPrompt } from "./systemPrompt.js";
 import { LOG_DIR } from "./config.js";
@@ -45,9 +45,10 @@ export class Agent {
   }
 
   async send(userText, hooks = {}) {
-    const { onThinkStart, onToken, onThinkEnd, onToolCall, onToolResult, onDenied, onDiagnostics } = hooks;
+    const { onThinkStart, onToken, onThinkEnd, onToolCall, onToolResult, onDenied, onDiagnostics, onCompact } = hooks;
 
     this.messages.push({ role: "user", content: userText });
+    await this._maybeCompact(onCompact);
 
     try {
       for (let i = 0; i < this.config.maxIterations; i++) {
@@ -123,6 +124,57 @@ export class Agent {
       // Persist the session after every turn so nothing is lost on crash/exit.
       await this.session.save().catch(() => {});
     }
+  }
+
+  // Rough token estimate (~4 chars/token) across all messages.
+  _estimateTokens() {
+    let chars = 0;
+    for (const m of this.messages) chars += (m.content || "").length;
+    return Math.ceil(chars / 4);
+  }
+
+  // When the conversation approaches the context window, summarize the older
+  // middle of the conversation into one compact note and keep recent turns, so
+  // long sessions don't overflow num_ctx or slow to a crawl.
+  async _maybeCompact(onCompact) {
+    const budget = (this.config.perf?.num_ctx ?? 8192);
+    const threshold = Math.floor(budget * 0.75); // leave room for the reply
+    if (this._estimateTokens() < threshold) return;
+
+    const keepRecent = 6;
+    // messages[0] is the system prompt; keep it and the last `keepRecent`.
+    if (this.messages.length <= keepRecent + 2) return;
+    const head = this.messages[0];
+    const middle = this.messages.slice(1, this.messages.length - keepRecent);
+    const tail = this.messages.slice(this.messages.length - keepRecent);
+
+    const transcript = middle
+      .map((m) => `${m.role.toUpperCase()}: ${m.content}`)
+      .join("\n")
+      .slice(0, 12000);
+
+    onCompact?.(middle.length);
+    let summary;
+    try {
+      summary = await complete({
+        host: this.config.host,
+        model: this.config.model,
+        perf: this.config.perf,
+        prompt:
+          "Summarize the following coding-assistant conversation so work can continue " +
+          "without the full history. Keep: the user's goals, key decisions, files created/edited " +
+          "and their purpose, and any unresolved tasks. Be concise and factual.\n\n" +
+          transcript,
+      });
+    } catch {
+      return; // if summarization fails, leave history as-is
+    }
+
+    this.session.messages = [
+      head,
+      { role: "user", content: `[earlier conversation summary]\n${summary.trim()}` },
+      ...tail,
+    ];
   }
 
   async _log(msg) {

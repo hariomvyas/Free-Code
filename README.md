@@ -82,7 +82,22 @@ Prefer a plain scrolling REPL? Run `fcode --classic`. Piped/non-interactive inpu
 
 ## Install
 
-Clone and link it as a global command:
+### One-line install (recommended)
+
+**macOS / Linux:**
+```bash
+curl -fsSL https://raw.githubusercontent.com/hariomvyas/Free-Code/main/install.sh | bash
+```
+
+**Windows (PowerShell):**
+```powershell
+irm https://raw.githubusercontent.com/hariomvyas/Free-Code/main/install.ps1 | iex
+```
+
+This clones the repo, links the `fcode` command globally, and pulls the default
+model. After that, just run `fcode`.
+
+### Manual install
 
 ```bash
 git clone https://github.com/hariomvyas/Free-Code.git
@@ -90,13 +105,15 @@ cd Free-Code
 npm link
 ```
 
-Or install straight from GitHub without cloning:
-
-```bash
-npm install -g git+https://github.com/hariomvyas/Free-Code.git
-```
-
 Either way, this gives you the `fcode` command anywhere on your system.
+
+### Auto-update
+
+Free Code **updates itself**. On launch it checks GitHub (at most once every 6
+hours); if the repo has new commits it fast-forwards your install and relaunches
+with the new code automatically — you always run the latest. Force a check any
+time with the `/update` command, or disable it with `FREECODE_NO_UPDATE=1` (or
+`fcode --no-update`).
 
 ## Setup
 
@@ -132,6 +149,7 @@ to run if either is missing.
 | `/tools` | List all tools available (built-in + MCP) |
 | `/sessions` | List saved sessions |
 | `/resume <id>` | Resume a saved session |
+| `/update` | Check for and pull the latest version now |
 | `/reset` | Clear conversation history, start fresh |
 | `exit` / `quit` | Quit |
 
@@ -249,9 +267,14 @@ count while the model thinks, each tool call as it happens (`🔧 write_file …
 a one-line summary of every tool result (`✓ wrote 43 bytes`), and finally the
 answer. You always know what Free Code is doing.
 
-## Sessions
+## Sessions & long conversations
 
 Every conversation is auto-saved to `.freecode/sessions/<id>.json` after each turn.
+
+Long sessions won't overflow the model's context window: when the conversation
+approaches the context budget, Free Code **automatically summarizes** the older
+middle of the conversation into a compact note and keeps the recent turns, so you
+can keep working without losing the thread (you'll see `⟳ compacting …`).
 
 | Command | Effect |
 |---|---|
@@ -322,8 +345,9 @@ src/tools/           files, shell, search, ls, web_search, web_fetch, browser
 - [x] MCP tool server support
 - [x] Diagnostics after edits
 - [x] Full-screen TUI
-- [ ] Context compaction for long sessions
-- [ ] One-line install script (auto-pulls model on first run)
+- [x] Context compaction for long sessions
+- [x] One-line install script (auto-pulls model on first run)
+- [x] Auto-update on launch
 - [ ] Subagents (parallel task delegation)
 
 ## Contributing

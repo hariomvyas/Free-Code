@@ -62,6 +62,31 @@ export async function runningModels(host, timeoutMs = 3000) {
   }
 }
 
+// Plain (non-envelope) completion, used for internal tasks like summarizing
+// old conversation turns during context compaction.
+export async function complete({ host, model, prompt, timeoutMs = 60000, perf }) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${host}/api/chat`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: "user", content: prompt }],
+        stream: false,
+        options: { num_ctx: perf?.num_ctx ?? 8192, num_gpu: perf?.num_gpu ?? 999 },
+      }),
+      signal: controller.signal,
+    });
+    if (!res.ok) throw new LLMError(`Ollama returned ${res.status}`);
+    const data = await res.json();
+    return data.message?.content || "";
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function chat({ host, model, messages, timeoutMs, onToken, perf }) {
   const controller = new AbortController();
   let timer;

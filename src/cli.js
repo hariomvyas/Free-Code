@@ -5,11 +5,13 @@ import { PermissionGate } from "./permission.js";
 import { Agent } from "./agent.js";
 import { Session } from "./session.js";
 import { ToolRegistry } from "./toolRegistry.js";
+import { spawnSync } from "node:child_process";
 import { LLMError, checkOllama, runningModels } from "./llm.js";
 import { Spinner, printToolCall, printToolResult, printAnswer, printBanner, color } from "./ui.js";
 import { Tui, c } from "./tui.js";
+import { autoUpdate, entryScript } from "./update.js";
 
-const COMMANDS = "/model  /models  /gpu  /tools  /sessions  /resume <id>  /reset  exit";
+const COMMANDS = "/model  /models  /gpu  /tools  /update  /sessions  /resume <id>  /reset  exit";
 
 // Handles slash commands + exit. Returns "quit", "handled", or "pass".
 // `print(text)` writes a line to the active surface (console or TUI).
@@ -42,6 +44,12 @@ async function handleCommand(input, { config, registry, holder, permissionGate, 
   }
   if (input === "/tools") {
     print(color("gray", holder.agent._describeTools()));
+    return "handled";
+  }
+  if (input === "/update") {
+    const res = await autoUpdate((line) => print(color("gray", `[update] ${line}`)));
+    print(color(res.updated ? "green" : "gray", `[update] ${res.message || (res.updated ? "updated" : "no update")}`));
+    if (res.updated) print(color("yellow", "restart fcode to apply the update"));
     return "handled";
   }
   if (input === "/models") {
@@ -97,6 +105,18 @@ async function setup() {
 }
 
 export async function main() {
+  // Auto-update: check GitHub, fast-forward a git checkout, and relaunch with
+  // the new code so the user always runs the latest. Best-effort + throttled.
+  const upd = await autoUpdate((line) => console.log(color("gray", `[update] ${line}`)));
+  if (upd.updated && upd.restartNeeded) {
+    console.log(color("green", "[update] " + upd.message));
+    const r = spawnSync(process.execPath, [entryScript(), ...process.argv.slice(2)], {
+      stdio: "inherit",
+      env: { ...process.env, FREECODE_UPDATED: "1" },
+    });
+    process.exit(r.status ?? 0);
+  }
+
   const classic = process.argv.includes("--classic") || !process.stdout.isTTY;
   const { config, registry, mcpSummary } = await setup();
   if (classic) return runClassic({ config, registry, mcpSummary });
@@ -139,6 +159,7 @@ async function runTui({ config, registry, mcpSummary }) {
         onToolResult: (name, resultText, ok) => tui.println(fmtToolResult(name, resultText, ok)),
         onDiagnostics: (_n, errors) => tui.println(c("yellow", "  ⚠ " + errors.split("\n")[0])),
         onDenied: (name) => tui.println(c("yellow", "  ✗ " + name + " denied")),
+        onCompact: (n) => tui.println(color("gray", `  ⟳ compacting ${n} older messages…`)),
       });
       tui.println(c("green", "◆ ") + reply);
     },
@@ -180,6 +201,7 @@ function runTurnHooks() {
     onToolResult: (name, resultText, ok) => printToolResult(name, resultText, ok),
     onDiagnostics: (_n, errors) => console.log(`   ${color("yellow", "⚠ diagnostics: " + errors.split("\n")[0])}`),
     onDenied: (name) => console.log(`   ${color("yellow", "✗ " + name + " denied")}`),
+    onCompact: (n) => console.log(color("gray", `   ⟳ compacting ${n} older messages…`)),
     _stop: () => spinner?.end(),
   };
 }
