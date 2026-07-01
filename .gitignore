@@ -1,0 +1,4 @@
+node_modules/
+.freecode/
+.claude/
+smoke_test_output.txt

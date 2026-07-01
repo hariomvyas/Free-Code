@@ -1,0 +1,23 @@
+{
+  "name": "freecode",
+  "version": "0.1.0",
+  "description": "Free Code — a local, offline coding agent CLI powered by small open-source LLMs via Ollama",
+  "type": "module",
+  "bin": {
+    "fcode": "./bin/freecode.js",
+    "freecode": "./bin/freecode.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hariomvyas/Free-Code.git"
+  },
+  "homepage": "https://github.com/hariomvyas/Free-Code#readme",
+  "bugs": {
+    "url": "https://github.com/hariomvyas/Free-Code/issues"
+  },
+  "author": "Hariom Vyas",
+  "license": "MIT"
+}
