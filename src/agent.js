@@ -35,6 +35,7 @@ export class Agent {
         model: this.config.model,
         messages: this.messages,
         timeoutMs: this.config.requestTimeoutMs,
+        perf: this.config.perf,
         onToken: (piece) => {
           tokenCount++;
           onToken?.(piece, tokenCount);

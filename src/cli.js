@@ -3,7 +3,7 @@ import { stdin, stdout } from "node:process";
 import { DEFAULT_CONFIG, pickModel } from "./config.js";
 import { PermissionGate } from "./permission.js";
 import { Agent } from "./agent.js";
-import { LLMError, checkOllama } from "./llm.js";
+import { LLMError, checkOllama, runningModels } from "./llm.js";
 import { Spinner, printToolCall, printToolResult, printAnswer, color } from "./ui.js";
 
 export async function main() {
@@ -36,7 +36,7 @@ export async function main() {
 
   console.log(color("bold", `Free Code v0.1.0`) + color("gray", ` — model: ${config.model}  host: ${config.host}`));
   console.log(color("gray", `cwd: ${process.cwd()}`));
-  console.log(color("gray", `commands: /model <name>  /models  /reset  exit\n`));
+  console.log(color("gray", `commands: /model <name>  /models  /gpu  /reset  exit\n`));
 
   while (true) {
     let raw;
@@ -57,6 +57,22 @@ export async function main() {
     if (input === "/models") {
       const s = await checkOllama(config.host);
       console.log(color("gray", `installed: ${s.models.join(", ") || "none"}`));
+      continue;
+    }
+    if (input === "/gpu") {
+      const loaded = await runningModels(config.host);
+      if (!loaded.length) {
+        console.log(color("gray", "no model loaded yet — send a message first, then /gpu"));
+      } else {
+        for (const m of loaded) {
+          const pctGpu = m.size ? Math.round((m.sizeVram / m.size) * 100) : 0;
+          const where = pctGpu === 0 ? color("yellow", "100% CPU (GPU not used)") : color("green", `${pctGpu}% on GPU`);
+          console.log(color("gray", `${m.name}: `) + where);
+        }
+        if (loaded.every((m) => m.sizeVram === 0)) {
+          console.log(color("yellow", "→ GPU idle. If you have an NVIDIA/AMD GPU, update its driver (see README: GPU acceleration)."));
+        }
+      }
       continue;
     }
     if (input.startsWith("/model ")) {

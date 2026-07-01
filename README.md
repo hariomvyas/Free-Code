@@ -100,6 +100,7 @@ to run if either is missing.
 |---|---|
 | `/model <name>` | Switch model for the rest of the session (must be installed) |
 | `/models` | List installed Ollama models |
+| `/gpu` | Show whether the current model is running on GPU or CPU |
 | `/reset` | Clear conversation history, start fresh |
 | `exit` / `quit` | Quit |
 
@@ -114,6 +115,42 @@ qwen2.5-coder:14b  →  qwen2.5-coder:7b  →  qwen2.5-coder:3b  →  qwen2.5-co
 
 So if you've pulled the 7B, `fcode` uses it; if you only have the 3B, it uses that.
 Pin a specific model any time with the `FREECODE_MODEL` environment variable.
+
+## GPU acceleration
+
+Free Code uses **all the hardware you have**. By default it tells Ollama to offload
+every model layer that fits into GPU VRAM (`num_gpu: 999`, which Ollama safely caps
+to what actually fits) and to use all your CPU cores. A GPU makes it **5–15× faster**.
+
+Check whether your GPU is actually being used — inside a session, send one message,
+then run:
+
+```
+/gpu
+```
+
+If it says `100% CPU (GPU not used)` but you *have* a discrete GPU, your **GPU driver
+is almost certainly too old for Ollama's CUDA runtime**. This is the #1 cause of
+CPU-only inference. Fix it:
+
+**NVIDIA:**
+1. Check your driver: `nvidia-smi` — look at the `CUDA Version` in the top-right.
+   Ollama needs **CUDA 12+** (driver ≈ 527 or newer). If it shows 10.x/11.x, update.
+2. Download the latest Game Ready / Studio driver for your card from
+   [nvidia.com/Download](https://www.nvidia.com/Download/index.aspx), install, reboot.
+3. Re-run `nvidia-smi` — `CUDA Version` should now be `12.x` or higher.
+
+**AMD:** install the latest Adrenalin driver + make sure ROCm is supported for your card.
+
+After updating, `/gpu` should show a high `% on GPU`.
+
+### Perf tuning (env vars)
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `FREECODE_NUM_GPU` | `999` | Model layers to offload to GPU (999 = as many as fit) |
+| `FREECODE_NUM_THREAD` | `0` (auto) | CPU threads to use |
+| `FREECODE_NUM_CTX` | `8192` | Context window size (bigger = more VRAM/RAM) |
 
 ## Configuration
 

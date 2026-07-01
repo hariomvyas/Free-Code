@@ -41,7 +41,28 @@ export async function checkOllama(host, timeoutMs = 3000) {
 // timeoutMs is an *inactivity* timeout: it resets every time a chunk arrives, so
 // a long-but-steadily-producing response won't be killed, but a truly stalled
 // connection still is.
-export async function chat({ host, model, messages, timeoutMs, onToken }) {
+// Reports how a currently-loaded model is split across CPU/GPU, via /api/ps.
+// Returns [] when nothing is loaded. Never throws.
+export async function runningModels(host, timeoutMs = 3000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${host}/api/ps`, { signal: controller.signal });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return (data.models || []).map((m) => ({
+      name: m.name,
+      sizeVram: m.size_vram || 0,
+      size: m.size || 0,
+    }));
+  } catch {
+    return [];
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function chat({ host, model, messages, timeoutMs, onToken, perf }) {
   const controller = new AbortController();
   let timer;
   const resetTimer = () => {
@@ -49,6 +70,10 @@ export async function chat({ host, model, messages, timeoutMs, onToken }) {
     timer = setTimeout(() => controller.abort(), timeoutMs);
   };
   resetTimer();
+
+  const options = { num_ctx: perf?.num_ctx ?? 8192 };
+  if (perf?.num_gpu != null) options.num_gpu = perf.num_gpu;
+  if (perf?.num_thread) options.num_thread = perf.num_thread;
 
   let res;
   try {
@@ -60,7 +85,7 @@ export async function chat({ host, model, messages, timeoutMs, onToken }) {
         messages,
         format: RESPONSE_FORMAT,
         stream: true,
-        options: { num_ctx: 8192 },
+        options,
       }),
       signal: controller.signal,
     });
