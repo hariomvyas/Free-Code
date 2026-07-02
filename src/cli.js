@@ -10,13 +10,16 @@ import { spawnSync } from "node:child_process";
 import { LLMError, engineProps } from "./llm.js";
 import { ensureEngineReady } from "./engine/index.js";
 import { MODELS_DIR } from "./engine/paths.js";
+import { modelByFile, modelTitle } from "./engine/models.js";
 import { buildAndRefresh } from "./codegraph/tools.js";
 import { search as cgSearch, callers as cgCallers, callees as cgCallees } from "./codegraph/query.js";
+import { lspStatus } from "./lsp/tools.js";
+import { getManager as getLspManager } from "./lsp/manager.js";
 import { Spinner, printToolCall, printToolResult, printAnswer, printBanner, color } from "./ui.js";
 import { Tui, c } from "./tui.js";
 import { autoUpdate, entryScript } from "./update.js";
 
-const COMMANDS = "/model  /models  /gpu  /index  /graph <name>  /tools  /update  /sessions  /resume <id>  /reset  exit";
+const COMMANDS = "/model  /models  /gpu  /index  /graph <name>  /lsp  /tools  /update  /sessions  /resume <id>  /reset  exit";
 
 // Handles slash commands + exit. Returns "quit", "handled", or "pass".
 // `print(text)` writes a line to the active surface (console or TUI).
@@ -62,8 +65,18 @@ async function handleCommand(input, { config, registry, holder, permissionGate, 
     try {
       files = (await fs.readdir(MODELS_DIR)).filter((f) => f.endsWith(".gguf"));
     } catch {}
-    print(color("gray", `installed models: ${files.join(", ") || "none"}`));
-    print(color("gray", `active: ${config.model}   (use /model to change)`));
+    if (!files.length) {
+      print(color("gray", "installed models: none"));
+    } else {
+      const activeFile = holder.engineConfig?.modelFile;
+      for (const file of files.sort()) {
+        const model = modelByFile(file);
+        const name = model ? modelTitle(model) : file;
+        const active = file === activeFile ? color("green", " [active]") : "";
+        print(color("gray", `- ${name}${active}  ${file}`));
+      }
+    }
+    print(color("gray", `active: ${config.model}   (use /model to switch or get more)`));
     return "handled";
   }
   if (input === "/gpu") {
@@ -108,6 +121,17 @@ async function handleCommand(input, { config, registry, holder, permissionGate, 
       print(color("yellow", `model switch failed: ${err.message}`));
     } finally {
       ui?.resume?.();
+    }
+    return "handled";
+  }
+  if (input === "/lsp") {
+    const s = lspStatus();
+    if (!s.count) {
+      print(color("yellow", "no language servers installed — LSP tools return install hints."));
+      print(color("gray", "install e.g.: npm i -g typescript-language-server typescript · npm i -g pyright · go install .../gopls@latest · rustup component add rust-analyzer"));
+    } else {
+      print(color("green", `language servers active (${s.count}):`));
+      for (const srv of s.installed) print(color("gray", `  ${srv.id}  →  ${srv.path}`));
     }
     return "handled";
   }
@@ -171,6 +195,10 @@ async function setup() {
     console.log(color("yellow", `  code graph unavailable: ${err.message}`));
   }
 
+  // Report which language servers are available (for LSP-backed diagnostics/tools).
+  const lsp = lspStatus();
+  if (lsp.count) console.log(color("gray", `  language servers: ${lsp.installed.map((s) => s.id).join(", ")}`));
+
   return { config, registry, mcpSummary, engine, engineConfig };
 }
 
@@ -189,8 +217,13 @@ export async function main() {
 
   const classic = process.argv.includes("--classic") || !process.stdout.isTTY;
   const ctx = await setup();
-  // Always shut the llama-server process down when Free Code exits.
-  const stopEngine = () => ctx.engine?.stop();
+  // Always shut the llama-server process + any language servers down on exit.
+  const stopEngine = () => {
+    ctx.engine?.stop();
+    try {
+      getLspManager().stopAll();
+    } catch {}
+  };
   process.on("exit", stopEngine);
   process.on("SIGINT", () => {
     stopEngine();
@@ -218,8 +251,9 @@ async function runTui({ config, registry, mcpSummary, engine, engineConfig }) {
   await permissionGate.load();
   holder.agent = new Agent({ config, permissionGate, toolRegistry: registry });
 
+  const cwdName = process.cwd().split(/[\\/]/).filter(Boolean).pop() || process.cwd();
   const tui = new Tui({
-    title: `Free Code · ${config.model}${mcpSummary.length ? " · mcp:" + mcpSummary.map((s) => s.server).join(",") : ""}`,
+    title: `Free Code  ${color("gray", "·")}  ${config.model}  ${color("gray", "·")}  ~/${cwdName}${mcpSummary.length ? "  " + color("gray", "· mcp:" + mcpSummary.map((s) => s.server).join(",")) : ""}`,
     onSubmit: async (input, signal) => {
       const res = await handleCommand(input, {
         config,
@@ -246,27 +280,37 @@ async function runTui({ config, registry, mcpSummary, engine, engineConfig }) {
         },
         signal
       );
-      tui.println(c("green", "◆ ") + reply);
+      // Assistant answer: a filled bullet on the first line, continuation lines
+      // aligned under it.
+      const lines = String(reply).split("\n");
+      tui.println("");
+      tui.println(c("accent", "⏺ ") + (lines[0] ?? ""));
+      for (const l of lines.slice(1)) tui.println("  " + l);
     },
   });
   tuiRef = tui;
   tui.start();
-  tui.println(color("gray", `session ${holder.agent.session.id} · ${COMMANDS}`));
+  tui.println(c("accent", "⏺ ") + color("gray", `session ${holder.agent.session.id} — ready`));
+  tui.println(color("gray", `  ${COMMANDS}`));
 }
 
-// Compact single-line tool renderings for the TUI transcript.
+// Tool renderings for the TUI transcript: an action bullet for the call and an
+// L-connector for its result, so each tool reads as a threaded step.
 function fmtToolCall(name, args) {
+  const bullet = c("accent", "⏺ ");
+  const label = name.startsWith("⤷") ? c("blue", name) : c("bold", name);
   if (name === "edit_file" && args.old_string != null)
-    return c("magenta", "✏ " + name) + " " + color("gray", args.path || "");
+    return bullet + label + color("gray", `(${args.path || ""})`);
   const s = JSON.stringify(args);
-  return c("magenta", "🔧 " + name) + " " + color("gray", s.length > 100 ? s.slice(0, 100) + "…" : s);
+  return bullet + label + color("gray", "(" + (s.length > 88 ? s.slice(0, 88) + "…" : s) + ")");
 }
 function fmtToolResult(name, resultText, ok) {
+  const conn = c("gray", "  ⎿ ");
   try {
     const p = JSON.parse(resultText);
-    if (p.error) return c("red", "  ✗ " + p.error.split("\n")[0]);
+    if (p.error) return conn + c("red", "✗ " + p.error.split("\n")[0]);
   } catch {}
-  return c("green", "  ✓ " + name);
+  return conn + c("green", "✓ ") + color("gray", "done");
 }
 
 // ---- Classic REPL mode ----

@@ -12,10 +12,12 @@ it. **Zero npm dependencies** (pure Node.js stdlib, ESM, `"type": "module"`, Nod
 binary and model file are downloaded assets, not npm packages. The optional `browser` tool uses
 Playwright, loaded lazily only if present.
 
-**First-run flow:** on the first `fcode`, a wizard (`src/engine/index.js`) detects the host's
-RAM/CPU/GPU, offers three model tiers (Light 1.5B / Balanced 3B / Full 7B), downloads the chosen
+**First-run flow:** on the first `fcode`, a picker (`src/engine/index.js`) detects the host's
+RAM/CPU/GPU, recommends a supported Qwen2.5-Coder GGUF model from the catalog, downloads the chosen
 GGUF + the `llama-server` binary into `~/.freecode/`, and records the choice in
-`~/.freecode/engine.json`. Later launches skip straight to booting the engine.
+`~/.freecode/engine.json`. Later launches skip straight to booting the engine. The `/model` command
+shows installed GGUFs first, then offers `Get and add more models` to download catalog models or add
+a custom GGUF URL.
 
 ## Commands
 
@@ -36,6 +38,7 @@ node scripts/smoke_session.js  # session save/resume
 node scripts/smoke_diag.js     # post-edit diagnostics
 node scripts/smoke_subagent.js # task() delegation
 node scripts/smoke_codegraph.js # code graph build + queries (no LLM/engine needed)
+node scripts/smoke_lsp.js       # LSP client vs scripts/mock-lsp-server.js (no real toolchain)
 ```
 
 LLM-driving smoke scripts boot the engine via `scripts/_boot.js` (`bootConfig()`), which calls
@@ -67,7 +70,7 @@ Key modules:
 
 - `src/engine/` — the self-contained inference engine (replaces Ollama). `index.js` = first-run
   wizard + `ensureEngineReady` (the CLI's entry into it); `system.js` = RAM/CPU/GPU detection;
-  `models.js` = the one model family + 3 tiers + `recommendTier`; `platform.js` = resolve the right
+  `models.js` = the supported model catalog + recommendation helpers; `platform.js` = resolve the right
   llama.cpp release asset from GitHub; `download.js` = stdlib HTTPS download (redirects/progress) +
   a **pure-JS ZIP extractor** (zlib `inflateRaw`, no npm dep); `server.js` = `Engine` spawns/
   health-checks `llama-server` on a free port; `state.js`/`paths.js` = `~/.freecode/` layout +
@@ -90,6 +93,15 @@ Key modules:
   incremental by mtime/size, stored as JSON in `.freecode/codegraph.json`; `query.js` =
   search/callers/callees/impact/explore over the graph (with an in-process cache);  `tools.js` =
   the five `code_*` agent tools + `buildAndRefresh`. Supported langs: JS/TS/JSX/TSX, Python, Go, Rust.
+- `src/lsp/` — optional **LSP client** for type-aware intelligence (pure-Node JSON-RPC, no npm dep).
+  `servers.js` = catalog of supported servers (typescript-language-server/pyright/gopls/rust-analyzer/
+  clangd) + `which()` PATH detection (never auto-installs); `client.js` = `LspClient` spawns a server,
+  does the `Content-Length` framing + initialize handshake, syncs docs (didOpen/didChange full-sync),
+  collects `publishDiagnostics`, and answers server→client requests generically so servers don't stall;
+  `manager.js` = `LspManager` singleton (`getManager()`), lazy client per language, formats results,
+  degrades to `{available:false, install}` when a server isn't installed; `tools.js` = the four `lsp_*`
+  tools + `lspStatus()`. Wired into the post-edit loop in `agent.js` (real type errors layered on the
+  syntax check). `/lsp` shows installed servers.
 - `src/toolRegistry.js` — unifies built-in tools with MCP-server tools behind one interface used
   by `Agent`. MCP tools are namespaced `<server>__<tool>` and gated by default (side effects
   unknown). Config: `.freecode/mcp.json` (see `mcp.example.json`).

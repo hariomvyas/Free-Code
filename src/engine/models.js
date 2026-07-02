@@ -1,58 +1,125 @@
-// Free Code runs ONE model family — Qwen2.5-Coder — offered in three sizes.
-// The first-run wizard shows all three and recommends one based on the host's
-// RAM/VRAM. Each tier is a single GGUF file (Q4_K_M quant) pulled straight from
-// Qwen's official Hugging Face GGUF repos. No Ollama, no registry.
+// Supported open-weight coding models Free Code can download directly as GGUF.
+// Keep entries limited to chat/instruct models that work with llama.cpp's
+// built-in chat template path (`--jinja`) and have stable direct file URLs.
 export const MODEL_FAMILY = "qwen2.5-coder";
 
-export const TIERS = [
+export const MODELS = [
+  {
+    id: "tiny",
+    label: "Tiny",
+    family: "Qwen2.5-Coder",
+    param: "0.5B",
+    repo: "Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF",
+    file: "qwen2.5-coder-0.5b-instruct-q4_k_m.gguf",
+    sizeGB: 0.4,
+    minRamGB: 4,
+    note: "Smallest download. Useful on very low-memory machines; weakest for multi-file edits.",
+  },
   {
     id: "light",
     label: "Light",
+    family: "Qwen2.5-Coder",
     param: "1.5B",
     repo: "Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF",
     file: "qwen2.5-coder-1.5b-instruct-q4_k_m.gguf",
     sizeGB: 1.1,
     minRamGB: 6,
-    note: "Fastest & lightest. Fine on 8GB RAM with no GPU. May skip steps on complex multi-file tasks.",
+    note: "Fastest small coding model. Good for 8GB RAM and CPU-only machines.",
   },
   {
     id: "balanced",
     label: "Balanced",
+    family: "Qwen2.5-Coder",
     param: "3B",
     repo: "Qwen/Qwen2.5-Coder-3B-Instruct-GGUF",
     file: "qwen2.5-coder-3b-instruct-q4_k_m.gguf",
     sizeGB: 2.0,
     minRamGB: 8,
-    note: "Good all-rounder (~2GB). Recommended for 16GB RAM.",
+    note: "Good default for 16GB RAM. Better instruction following than Light.",
   },
   {
     id: "full",
     label: "Full",
+    family: "Qwen2.5-Coder",
     param: "7B",
     repo: "Qwen/Qwen2.5-Coder-7B-Instruct-GGUF",
     file: "qwen2.5-coder-7b-instruct-q4_k_m.gguf",
     sizeGB: 4.7,
     minRamGB: 16,
-    note: "Most reliable at multi-file work. Best with a GPU or 16GB+ RAM; slow on CPU-only.",
+    note: "Best local default when a GPU or enough RAM is available.",
+  },
+  {
+    id: "large",
+    label: "Large",
+    family: "Qwen2.5-Coder",
+    param: "14B",
+    repo: "Qwen/Qwen2.5-Coder-14B-Instruct-GGUF",
+    file: "qwen2.5-coder-14b-instruct-q4_k_m.gguf",
+    sizeGB: 9.0,
+    minRamGB: 24,
+    note: "Stronger reasoning and repair; expect slower CPU-only performance.",
+  },
+  {
+    id: "xl",
+    label: "XL",
+    family: "Qwen2.5-Coder",
+    param: "32B",
+    repo: "Qwen/Qwen2.5-Coder-32B-Instruct-GGUF",
+    file: "qwen2.5-coder-32b-instruct-q4_k_m.gguf",
+    sizeGB: 19.0,
+    minRamGB: 48,
+    note: "Highest quality supported catalog model; intended for high-memory systems.",
   },
 ];
 
+// Backward-compatible names: older code/config called these entries "tiers".
+export const TIERS = MODELS;
+
+export function modelById(id) {
+  return MODELS.find((m) => m.id === id) || null;
+}
+
 export function tierById(id) {
-  return TIERS.find((t) => t.id === id) || null;
+  return modelById(id);
 }
 
-// Direct download URL for a tier's GGUF on Hugging Face.
-export function modelUrl(tier) {
-  return `https://huggingface.co/${tier.repo}/resolve/main/${tier.file}?download=true`;
+export function modelByFile(file) {
+  return MODELS.find((m) => m.file === file) || null;
 }
 
-// Recommend a tier index (0..2) from detected system resources. GPUs shift the
-// recommendation up because offloaded layers make the bigger models usable.
+export function modelTitle(model) {
+  if (!model) return "";
+  return `${model.label} - ${model.family} ${model.param}`;
+}
+
+// Direct download URL for a catalog model's GGUF on Hugging Face.
+export function modelUrl(model) {
+  return `https://huggingface.co/${model.repo}/resolve/main/${model.file}?download=true`;
+}
+
+export function modelFitsSystem(model, sys) {
+  return (sys?.totalGB ?? 0) >= model.minRamGB;
+}
+
+// Recommend one model from detected system resources. GPUs shift the target up
+// because llama.cpp can offload layers; CPU-only machines stay conservative.
+export function recommendModel(sys) {
+  const total = sys?.totalGB ?? 0;
+  const vram = sys?.gpu?.vramGB ?? 0;
+  const metal = sys?.gpu?.kind === "metal";
+
+  let id = "tiny";
+  if (vram >= 24 || (metal && total >= 64)) id = "xl";
+  else if (vram >= 12 || (metal && total >= 32)) id = "large";
+  else if (vram >= 6 || (metal && total >= 16)) id = "full";
+  else if (total >= 15) id = "balanced";
+  else if (total >= 8) id = "light";
+
+  return modelById(id) || MODELS[0];
+}
+
+// Backward-compatible API used by the old picker: return the recommended index.
 export function recommendTier(sys) {
-  const vram = sys.gpu?.vramGB ?? 0;
-  const metal = sys.gpu?.kind === "metal";
-  // Discrete GPU with >=6GB VRAM, or Apple Silicon with >=16GB unified memory.
-  if (vram >= 6 || (metal && sys.totalGB >= 16)) return 2; // Full 7B
-  if (sys.totalGB >= 15) return 1; // 16GB-class → Balanced 3B
-  return 0; // Light 1.5B
+  const model = recommendModel(sys);
+  return Math.max(0, MODELS.findIndex((m) => m.id === model.id));
 }

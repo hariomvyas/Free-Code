@@ -6,6 +6,7 @@ import { buildSystemPrompt, buildSubagentPrompt } from "./systemPrompt.js";
 import { LOG_DIR } from "./config.js";
 import { Session } from "./session.js";
 import { checkFile } from "./diagnostics.js";
+import { getManager } from "./lsp/manager.js";
 
 const TASK_DOC =
   "\n- task(description: string, prompt: string) — Delegate a focused subtask to a fresh subagent " +
@@ -136,6 +137,23 @@ export class Agent {
                 onDiagnostics?.(toolName, diag.errors);
               } else if (diag?.checked && diag.ok) {
                 result.diagnostics = "ok (no syntax errors)";
+              }
+              // If a language server is installed for this file, layer real
+              // compiler/type diagnostics on top of the syntax check.
+              try {
+                const lsp = await getManager().diagnostics(result.path);
+                if (lsp.available) {
+                  const errs = lsp.diagnostics.filter((d) => d.severity === "error");
+                  if (errs.length) {
+                    const text = errs.map((d) => `${d.line}:${d.character} ${d.message}`).join("\n");
+                    result.diagnostics = (result.diagnostics && result.diagnostics.startsWith("FAILED") ? result.diagnostics + "\n" : "") +
+                      `LSP (${lsp.server}) errors — fix these:\n${text}`;
+                    ok = false;
+                    onDiagnostics?.(toolName, text);
+                  }
+                }
+              } catch {
+                // LSP is best-effort; never block an edit on it.
               }
             }
             resultText = JSON.stringify(result);

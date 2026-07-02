@@ -13,24 +13,28 @@ const st = { title: "Free Code", lines: ["hello", "world"], scroll: 0, input: "h
 let f = composeFrame(st, 40, 10);
 ok("frame row count == rows", f.rows.length === 10);
 
-// 2. Header on row 0, input (with prompt) on last row.
+// 2. Header on row 0; input (with prompt) on the input box's middle row.
+// Layout reserves 6 rows at the bottom: status + 3-row input box + hint. For a
+// 10-row screen the input line sits at index 7 (0-based); box borders are 6 & 8.
 ok("header shows title", stripAnsi(f.rows[0]).includes("Free Code"));
-ok("input line shows input", stripAnsi(f.rows[9]).includes("hi"));
+ok("input line shows input", stripAnsi(f.rows[7]).includes("hi"));
+ok("input box has rounded border", stripAnsi(f.rows[6]).startsWith("╭") && stripAnsi(f.rows[8]).startsWith("╰"));
+ok("hint row present", stripAnsi(f.rows[9]).includes("ctrl+c"));
 
-// 3. Cursor is on the last row, after the prompt + input.
-ok("cursor row is last", f.cursorRow === 10);
-ok("cursor col past prompt", f.cursorCol === "❯ ".length + 2 + 1);
+// 3. Cursor sits inside the input box (row height-2), past the border+space+prompt.
+ok("cursor row is input box", f.cursorRow === 8);
+ok("cursor col past prompt", f.cursorCol === 1 + 1 + "› ".length + 2 + 1);
 
 // 4. Transcript shows most recent lines at the bottom of the body region.
 const many = { title: "t", lines: Array.from({ length: 100 }, (_, i) => "line" + i), scroll: 0, input: "", cursor: 0, status: "" };
-// body region is rows[1..(rows-3)] inclusive => indices 1..7 for a 10-row screen
+// body region is rows[1..(height-6)] inclusive => indices 1..4 for a 10-row screen
 f = composeFrame(many, 40, 10);
-const body = f.rows.slice(1, 8).map(stripAnsi).map((s) => s.trim());
+const body = f.rows.slice(1, 5).map(stripAnsi).map((s) => s.trim());
 ok("newest line visible at bottom", body[body.length - 1] === "line99");
 
 // 5. Scrolling up shows older lines.
 f = composeFrame({ ...many, scroll: 10 }, 40, 10);
-const body2 = f.rows.slice(1, 8).map(stripAnsi).map((s) => s.trim());
+const body2 = f.rows.slice(1, 5).map(stripAnsi).map((s) => s.trim());
 ok("scroll shows older lines", body2[body2.length - 1] === "line89");
 
 // 6. Long lines wrap to width.

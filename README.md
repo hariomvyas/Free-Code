@@ -44,10 +44,11 @@ fcode> Added email/password validation to login() in src/auth.js.
 | | |
 |---|---|
 | 🧠 **Local model** | Runs on your own machine via a bundled llama.cpp engine — no Ollama, no API keys |
-| 🧭 **Guided setup** | First run analyzes your machine and offers 3 model tiers to pick from |
+| 🧭 **Guided setup** | First run analyzes your machine and recommends a model from the catalog |
 | 🪶 **Runs on 8GB RAM** | Light tier is a 1.5B quantized coder model (~1GB on disk) |
 | 🛠️ **Rich toolset** | files, shell, search, **web search + fetch**, optional real browser |
 | 🕸️ **Code graph** | Built-in tree-sitter index — the agent navigates by callers/callees, not just grep |
+| 🔬 **LSP** | Uses installed language servers for real type errors + go-to-def/references (optional) |
 | 🌐 **Internet access** | `web_search` (no API key) and `web_fetch` read live web pages |
 | 🔌 **MCP servers** | Plug in any Model Context Protocol tool server |
 | 💾 **Sessions** | Auto-saved conversations you can list and resume |
@@ -67,6 +68,7 @@ installed only if you want JS-rendered browsing.</sub>
 | `read_file` / `write_file` / `edit_file` / `multi_edit` | Read and modify files |
 | `ls` / `glob` / `grep` | Explore and search the project |
 | `code_search` / `code_callers` / `code_callees` / `code_impact` / `code_explore` | Navigate code via the built-in code graph (see below) |
+| `lsp_diagnostics` / `lsp_hover` / `lsp_definition` / `lsp_references` | Type-aware intelligence via installed language servers (see below) |
 | `bash` | Run shell commands (permission-gated) |
 | `web_search` | Search the web via DuckDuckGo (no API key) |
 | `web_fetch` | Fetch a URL and return readable text |
@@ -108,6 +110,24 @@ The agent gets five tools from it:
 
 Peek at it yourself with `/graph <name>`.
 
+### LSP (language servers)
+
+For **type-aware** intelligence beyond the static code graph, Free Code speaks
+[LSP](https://microsoft.github.io/language-server-protocol/) to whatever language servers you
+have installed — a pure-Node JSON-RPC client, no npm dependency.
+
+- **Optional & graceful:** if a server for a file's language is installed, the agent gets real
+  compiler/type diagnostics + go-to-definition/references; if not, the tools return an install hint
+  instead of failing. Nothing to configure.
+- **Auto-detected on PATH:** `typescript-language-server`, `pyright`, `gopls`, `rust-analyzer`,
+  `clangd`. Free Code never installs them for you (that would break the offline promise) — install
+  the ones you want, e.g. `npm i -g typescript-language-server typescript`.
+- **Wired into edits:** after the model writes/edits a file, real LSP errors are fed back alongside
+  the built-in syntax check, so it fixes type errors next turn.
+
+Tools: `lsp_diagnostics` (real errors for a file), `lsp_hover` (types/docs at a position),
+`lsp_definition`, `lsp_references`. See which servers are active with `/lsp`.
+
 ## Interface
 
 `fcode` launches a **full-screen TUI** when run in a real terminal: a scrollable
@@ -141,8 +161,8 @@ irm https://raw.githubusercontent.com/hariomvyas/Free-Code/main/install.ps1 | ie
 ```
 
 This clones the repo and links the `fcode` command globally. The **first time you run `fcode`**,
-a setup wizard analyzes your machine, offers three model tiers, and downloads your pick plus the
-llama.cpp engine. After that, just run `fcode`.
+a setup wizard analyzes your machine, recommends a supported open-source model, and downloads your
+pick plus the llama.cpp engine. After that, just run `fcode`.
 
 ### Manual install
 
@@ -173,18 +193,20 @@ fcode
 The **first time**, Free Code analyzes your machine and shows a picker like this:
 
 ```
-Free Code — first-time setup
+Free Code - first-time setup
 Detected: 15.8GB RAM · 12 CPU cores · NVIDIA GPU (6.0GB VRAM)
-Pick a model to install. It runs 100% locally — no Ollama, no cloud.
+Models run 100% locally through the bundled llama.cpp engine.
 
-  1. Light — Qwen2.5-Coder 1.5B (~1.1GB)
-     Fastest & lightest. Fine on 8GB RAM with no GPU.
-  2. Balanced — Qwen2.5-Coder 3B (~2GB)
-     Good all-rounder. Recommended for 16GB RAM.
-  3. Full — Qwen2.5-Coder 7B (~4.7GB)  ★ recommended
-     Most reliable at multi-file work. Best with a GPU or 16GB+ RAM.
+Open-source models available to download
+  1. Tiny - Qwen2.5-Coder 0.5B (~0.4GB)
+  2. Light - Qwen2.5-Coder 1.5B (~1.1GB)
+  3. Balanced - Qwen2.5-Coder 3B (~2GB)
+  4. Full - Qwen2.5-Coder 7B (~4.7GB) [recommended]
+  5. Large - Qwen2.5-Coder 14B (~9GB) [needs ~24GB RAM]
+  6. XL - Qwen2.5-Coder 32B (~19GB) [needs ~48GB RAM]
+  7. Add a custom GGUF URL
 
-Choose 1-3 [3]:
+Choose 1-7 [4]:
 ```
 
 Pick one and Free Code downloads it (plus the llama.cpp engine binary) into `~/.freecode/`. Every
@@ -203,7 +225,7 @@ automatically. No background service to start or manage.
 
 | Command | Effect |
 |---|---|
-| `/model` | Re-run the model picker — switch tier, download if needed, restart the engine |
+| `/model` | Show installed models first, then switch models or download/add more |
 | `/models` | List downloaded model files and the active one |
 | `/gpu` | Show the engine build (CPU/CUDA/Vulkan/Metal) and GPU offload |
 | `/index` | Rebuild the code graph now (shows symbol/edge counts) |
@@ -217,17 +239,21 @@ automatically. No background service to start or manage.
 
 ## Choosing & changing your model
 
-The first-run wizard recommends a tier based on your detected RAM and GPU, but you pick. The three
-tiers are all [Qwen2.5-Coder](https://huggingface.co/Qwen) (Q4_K_M GGUF):
+The first-run wizard recommends a model based on your detected RAM and GPU, but you pick. The built-in
+catalog contains [Qwen2.5-Coder](https://huggingface.co/Qwen) Q4_K_M GGUF models:
 
-| Tier | Model | Size | Good for |
+| Label | Model | Size | Good for |
 |---|---|---|---|
+| **Tiny** | Qwen2.5-Coder 0.5B | ~0.4GB | Very low-memory machines. Weakest for multi-file edits. |
 | **Light** | Qwen2.5-Coder 1.5B | ~1.1GB | 8GB RAM, no GPU. Fast, but skips steps on complex tasks. |
 | **Balanced** | Qwen2.5-Coder 3B | ~2.0GB | 16GB RAM. Solid all-rounder. |
 | **Full** ⭐ | Qwen2.5-Coder 7B | ~4.7GB | GPU or 16GB+ RAM. Most reliable at multi-file work. |
+| **Large** | Qwen2.5-Coder 14B | ~9.0GB | Higher quality on high-memory systems. |
+| **XL** | Qwen2.5-Coder 32B | ~19GB | Highest quality catalog model; intended for high-memory systems. |
 
-Switch tiers any time from inside a session with `/model` — it re-runs the picker, downloads the new
-model if needed, and restarts the engine. Only one model is active at a time.
+Switch models any time from inside a session with `/model`. It shows installed models first, with
+`Get and add more models` at the bottom; choosing that opens the catalog and a custom GGUF URL option.
+Only one model is active at a time.
 
 ## GPU acceleration
 
@@ -266,7 +292,7 @@ Set these as environment variables before running `fcode`:
 
 The model isn't set by env var — pick it in the first-run wizard or with `/model`.
 
-> **Note:** the 1.5B/3B tiers are light and fast but will sometimes skip steps or answer without
+> **Note:** the 0.5B/1.5B/3B models are light and fast but will sometimes skip steps or answer without
 > actually running a tool on complex, multi-part tasks. If a smaller model isn't building what you
 > ask, switch to the 7B (`/model`) — it's dramatically more reliable at multi-step work.
 
@@ -402,7 +428,7 @@ src/tools/           files, shell, search, ls, web_search, web_fetch, browser
 - [x] Auto-update on launch
 - [x] Subagents (task delegation)
 - [x] Self-contained engine — bundled llama.cpp, no Ollama
-- [x] Guided first-run setup (system analysis → pick 1 of 3 model tiers)
+- [x] Guided first-run setup (system analysis -> recommended model catalog)
 - [x] Built-in tree-sitter code graph (search / callers / callees / impact / explore)
 
 ## Contributing

@@ -14,6 +14,10 @@ export const ANSI = {
   home: "\x1b[H",
   hideCursor: "\x1b[?25l",
   showCursor: "\x1b[?25h",
+  // Mouse tracking (button events + SGR extended coords) so the wheel scrolls the
+  // transcript — the alt screen otherwise disables the terminal's native scroll.
+  mouseOn: "\x1b[?1000h\x1b[?1006h",
+  mouseOff: "\x1b[?1000l\x1b[?1006l",
 };
 
 const COL = {
@@ -27,6 +31,7 @@ const COL = {
   yellow: "\x1b[33m",
   magenta: "\x1b[35m",
   blue: "\x1b[34m",
+  accent: "\x1b[38;5;214m", // warm amber accent
   invert: "\x1b[7m",
 };
 export const c = (name, s) => `${COL[name]}${s}${COL.reset}`;
@@ -75,19 +80,23 @@ function padTo(line, w) {
 
 // PURE: given state + terminal size, return the exact screen rows and where the
 // cursor should sit. state = { title, lines[], scroll, input, cursor, status }.
+//
+// Layout (top → bottom): a slim header · transcript body · a status/spinner line ·
+// a rounded input box (3 rows) with a `>` prompt · a dim shortcuts hint. Modeled
+// on the clean, low-chrome look of modern agent CLIs — the input box anchors the
+// screen and tool activity reads as a threaded list above it.
 export function composeFrame(state, cols, rows) {
   const width = Math.max(20, cols);
   const height = Math.max(6, rows);
   const out = [];
 
-  // Header
-  const title = ` ${state.title || "Free Code"} `;
-  out.push(c("invert", padTo(title, width)));
+  // Slim header — dim, no heavy bar.
+  const dot = c("accent", "✻");
+  out.push(padTo(` ${dot} ${state.title || "Free Code"}`, width));
 
-  // Transcript region height
-  const bodyH = height - 3; // header + status + input
+  // Transcript body. Reserve: header(1) + status(1) + box(3) + hint(1) = 6 rows.
+  const bodyH = Math.max(0, height - 6);
 
-  // Flatten wrapped transcript lines.
   const wrapped = [];
   for (const l of state.lines) {
     for (const seg of wrapToWidth(l, width)) wrapped.push(seg);
@@ -100,25 +109,37 @@ export function composeFrame(state, cols, rows) {
     out.push(view[i] != null ? padTo(view[i], width) : "");
   }
 
-  // Status line
-  const scrollHint = scroll > 0 ? c("yellow", ` ↑${scroll} (PgUp/PgDn) `) : "";
-  out.push(c("dim", padTo((state.status || "") + scrollHint, width)));
+  // Status / spinner line (above the box).
+  const scrollHint = scroll > 0 ? c("yellow", ` ↑${scroll} PgUp/PgDn`) : "";
+  out.push(c("dim", padTo("  " + (state.status || "") + scrollHint, width)));
 
-  // Input line
-  const prompt = state.promptMode ? c("yellow", state.promptLabel + " ") : c("cyan", "❯ ");
+  // Rounded input box (3 rows) with a `>` prompt.
+  const boxInner = width - 2; // chars between the │ … │ borders
+  const prompt = state.promptMode ? c("yellow", state.promptLabel + " ") : c("accent", "› ");
   const promptW = visibleLen(prompt);
-  const avail = width - promptW;
+  const avail = Math.max(1, boxInner - 1 - promptW); // 1 for left padding space
   const input = state.input || "";
   const cur = state.cursor ?? input.length;
   let hscroll = 0;
   if (cur > avail - 1) hscroll = cur - (avail - 1);
   const shown = input.slice(hscroll, hscroll + avail);
-  out.push(padTo(prompt + shown, width));
+  const inner = " " + prompt + shown;
+  const border = state.promptMode ? "yellow" : "gray";
+
+  out.push(c(border, "╭" + "─".repeat(boxInner) + "╮"));
+  out.push(c(border, "│") + padTo(inner, boxInner) + c(border, "│"));
+  out.push(c(border, "╰" + "─".repeat(boxInner) + "╯"));
+
+  // Dim shortcuts hint (below the box).
+  const hint = state.busy
+    ? "esc to interrupt"
+    : "/ commands   ↑↓ history   PgUp/PgDn scroll   esc interrupt   ctrl+c quit";
+  out.push(c("dim", padTo("  " + hint, width)));
 
   return {
     rows: out.slice(0, height),
-    cursorRow: height, // 1-based row for the input line (last row)
-    cursorCol: promptW + (cur - hscroll) + 1, // 1-based
+    cursorRow: height - 2, // 1-based: the middle row of the input box
+    cursorCol: 1 /*│*/ + 1 /*space*/ + promptW + (cur - hscroll) + 1, // 1-based
   };
 }
 
@@ -139,14 +160,16 @@ export class Tui {
   }
 
   start() {
-    this.out.write(ANSI.altScreenOn + ANSI.clear + ANSI.home);
+    this.out.write(ANSI.altScreenOn + ANSI.clear + ANSI.home + ANSI.mouseOn);
     readline.emitKeypressEvents(process.stdin);
     if (process.stdin.isTTY) process.stdin.setRawMode(true);
+    // Ensure stdin is flowing again — a prior readline (e.g. the /model wizard)
+    // can leave it paused, which would make the TUI unresponsive after resume.
+    process.stdin.resume();
     this._onKey = (str, key) => this._handleKey(str, key);
     process.stdin.on("keypress", this._onKey);
     this._onResize = () => this.render();
     this.out.on("resize", this._onResize);
-    this.println(c("gray", "Type your request and press Enter. ESC interrupts a running turn · Ctrl+C quits."));
     this.render();
   }
 
@@ -154,7 +177,7 @@ export class Tui {
     process.stdin.off("keypress", this._onKey);
     this.out.off("resize", this._onResize);
     if (process.stdin.isTTY) process.stdin.setRawMode(false);
-    this.out.write(ANSI.showCursor + ANSI.altScreenOff);
+    this.out.write(ANSI.mouseOff + ANSI.showCursor + ANSI.altScreenOff);
   }
 
   // Temporarily hand the terminal back to plain stdin/stdout (e.g. to run the
@@ -170,8 +193,12 @@ export class Tui {
 
   // Append a line (may contain \n) to the transcript.
   println(text = "") {
-    for (const line of String(text).split("\n")) this.state.lines.push(line);
-    this.state.scroll = 0; // jump to bottom on new output
+    const added = String(text).split("\n");
+    for (const line of added) this.state.lines.push(line);
+    // If the user has scrolled up to read history, keep their view anchored
+    // instead of yanking to the bottom on every new line; otherwise follow it.
+    if (this.state.scroll > 0) this.state.scroll += added.length;
+    else this.state.scroll = 0;
     this.render();
   }
 
@@ -187,11 +214,14 @@ export class Tui {
   _startBusy() {
     this._tokens = 0;
     this._busyStart = Date.now();
-    const frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+    const frames = ["✻", "✦", "✧", "✶", "✷", "✸", "✹", "✺"];
+    const words = ["Thinking", "Working", "Pondering", "Cooking", "Crunching", "Reasoning", "Churning"];
+    this._word = words[Math.floor(Math.random() * words.length)];
     this._busyTimer = setInterval(() => {
       const f = frames[(this._frame = (this._frame + 1) % frames.length)];
-      const secs = ((Date.now() - this._busyStart) / 1000).toFixed(1);
-      this.state.status = c("cyan", f) + c("dim", ` thinking… ${secs}s · ${this._tokens} tok`);
+      const secs = ((Date.now() - this._busyStart) / 1000).toFixed(0);
+      this.state.status =
+        c("accent", f) + c("bold", ` ${this._word}… `) + c("dim", `${secs}s · ${this._tokens} tokens`);
       this.render();
     }, 120);
   }
@@ -221,6 +251,18 @@ export class Tui {
     this.render();
   }
 
+  // Handle a captured SGR mouse report "b;x;y". Wheel up = button 64, down = 65.
+  _applyMouse(params) {
+    const b = parseInt(params.split(";")[0], 10);
+    if (b === 64) {
+      this.state.scroll += 3;
+      this.render();
+    } else if (b === 65) {
+      this.state.scroll = Math.max(0, this.state.scroll - 3);
+      this.render();
+    }
+  }
+
   render() {
     const cols = this.out.columns || 80;
     const rows = this.out.rows || 24;
@@ -233,6 +275,23 @@ export class Tui {
   }
 
   async _handleKey(str, key) {
+    // Mouse-wheel scroll. Node's keypress parser splits an SGR mouse sequence
+    // (ESC[<b;x;yM) into a lead event then its individual chars — which would
+    // otherwise be injected as text — so we capture and swallow the whole thing.
+    if (this._mouse != null) {
+      if (str === "M" || str === "m") {
+        this._applyMouse(this._mouse);
+        this._mouse = null;
+      } else {
+        this._mouse += str ?? "";
+      }
+      return;
+    }
+    if (key && key.name === undefined && key.sequence === "\x1b[<") {
+      this._mouse = ""; // start of an SGR mouse report
+      return;
+    }
+
     if (!key) return;
 
     // Permission / question prompt mode: capture a single valid key.
@@ -316,8 +375,10 @@ export class Tui {
     this.histIdx = -1;
     this.state.input = "";
     this.state.cursor = 0;
-    this.println(c("cyan", "❯ ") + text);
+    this.println(""); // breathing room between turns
+    this.println(c("gray", "› ") + text);
     this.busy = true;
+    this.state.busy = true;
     this._startBusy();
     // Fresh abort controller per turn so ESC can interrupt just this one.
     this._turnAbort = new AbortController();
@@ -329,6 +390,7 @@ export class Tui {
     this._turnAbort = null;
     this._stopBusy();
     this.busy = false;
+    this.state.busy = false;
     this.render();
   }
 
