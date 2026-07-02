@@ -1,13 +1,14 @@
-// Thin client for a local Ollama server's /api/chat endpoint.
+// Client for the bundled llama.cpp `llama-server`, which exposes an
+// OpenAI-compatible API on a local port (see src/engine/). No Ollama, no cloud.
 //
-// Small local models are unreliable at native OpenAI-style tool_calls (tested:
-// qwen2.5-coder:3b silently falls back to plain-text pseudo-JSON instead of
-// populating message.tool_calls). Ollama's structured-output "format" param
-// (JSON-schema-constrained decoding) is far more reliable, so every turn is
-// forced into a fixed envelope shape instead of relying on native tool-calling.
+// Small local models are unreliable at native OpenAI-style tool_calls, so every
+// turn is forced into a fixed JSON envelope via llama.cpp's constrained decoding
+// (response_format json_schema → GBNF grammar under the hood), which is far more
+// reliable on 1.5B–7B models than hoping message.tool_calls populates correctly.
 
 export class LLMError extends Error {}
 
+// Raw JSON schema for the envelope. Wrapped into an OpenAI response_format below.
 export const RESPONSE_FORMAT = {
   type: "object",
   properties: {
@@ -18,76 +19,73 @@ export const RESPONSE_FORMAT = {
   required: ["tool", "arguments", "final_answer"],
 };
 
-// Returns { reachable, models } — never throws, used for a friendly startup check.
-export async function checkOllama(host, timeoutMs = 3000) {
+const ENVELOPE_FORMAT = {
+  type: "json_schema",
+  json_schema: { name: "freecode_envelope", strict: true, schema: RESPONSE_FORMAT },
+};
+
+// Health check against the local engine. Returns { reachable, model } and never
+// throws — used for a friendly startup message and the /gpu-style status.
+export async function checkEngine(baseUrl, timeoutMs = 3000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch(`${host}/api/tags`, { signal: controller.signal });
-    if (!res.ok) return { reachable: false, models: [] };
-    const data = await res.json();
-    return { reachable: true, models: (data.models || []).map((m) => m.name) };
+    const res = await fetch(`${baseUrl}/health`, { signal: controller.signal });
+    return { reachable: res.ok };
   } catch {
-    return { reachable: false, models: [] };
+    return { reachable: false };
   } finally {
     clearTimeout(timer);
   }
 }
 
-// Streams the model's reply from /api/chat (NDJSON). onToken(chunk) fires for
-// each partial content chunk so the caller can show live progress. Returns the
-// fully accumulated message once the stream is done.
-//
-// timeoutMs is an *inactivity* timeout: it resets every time a chunk arrives, so
-// a long-but-steadily-producing response won't be killed, but a truly stalled
-// connection still is.
-// Reports how a currently-loaded model is split across CPU/GPU, via /api/ps.
-// Returns [] when nothing is loaded. Never throws.
-export async function runningModels(host, timeoutMs = 3000) {
+// Fetch llama-server's /props (model path, context size, etc.) for `/gpu` and
+// diagnostics. Returns null on failure.
+export async function engineProps(baseUrl, timeoutMs = 3000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch(`${host}/api/ps`, { signal: controller.signal });
-    if (!res.ok) return [];
-    const data = await res.json();
-    return (data.models || []).map((m) => ({
-      name: m.name,
-      sizeVram: m.size_vram || 0,
-      size: m.size || 0,
-    }));
+    const res = await fetch(`${baseUrl}/props`, { signal: controller.signal });
+    if (!res.ok) return null;
+    return await res.json();
   } catch {
-    return [];
+    return null;
   } finally {
     clearTimeout(timer);
   }
 }
 
-// Plain (non-envelope) completion, used for internal tasks like summarizing
-// old conversation turns during context compaction.
-export async function complete({ host, model, prompt, timeoutMs = 60000, perf }) {
+// Plain (non-envelope) completion, used for internal tasks like summarizing old
+// conversation turns during context compaction.
+export async function complete({ host, prompt, timeoutMs = 60000 }) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch(`${host}/api/chat`, {
+    const res = await fetch(`${host}/v1/chat/completions`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        model,
         messages: [{ role: "user", content: prompt }],
         stream: false,
-        options: { num_ctx: perf?.num_ctx ?? 8192, num_gpu: perf?.num_gpu ?? 999 },
+        temperature: 0.2,
       }),
       signal: controller.signal,
     });
-    if (!res.ok) throw new LLMError(`Ollama returned ${res.status}`);
+    if (!res.ok) throw new LLMError(`engine returned ${res.status}`);
     const data = await res.json();
-    return data.message?.content || "";
+    return data.choices?.[0]?.message?.content || "";
   } finally {
     clearTimeout(timer);
   }
 }
 
-export async function chat({ host, model, messages, timeoutMs, onToken, perf }) {
+// Streams the model's reply from /v1/chat/completions (SSE). onToken(chunk)
+// fires per content delta so the caller can show live progress. Returns the
+// fully accumulated assistant message once the stream ends.
+//
+// timeoutMs is an *inactivity* timeout: it resets on every chunk, so a long but
+// steadily-producing response isn't killed while a truly stalled one still is.
+export async function chat({ host, messages, timeoutMs, onToken, signal }) {
   const controller = new AbortController();
   let timer;
   const resetTimer = () => {
@@ -96,38 +94,39 @@ export async function chat({ host, model, messages, timeoutMs, onToken, perf }) 
   };
   resetTimer();
 
-  const options = { num_ctx: perf?.num_ctx ?? 8192 };
-  if (perf?.num_gpu != null) options.num_gpu = perf.num_gpu;
-  if (perf?.num_thread) options.num_thread = perf.num_thread;
+  // User interrupt (e.g. ESC): abort the in-flight request when `signal` fires.
+  if (signal) {
+    if (signal.aborted) controller.abort();
+    else signal.addEventListener("abort", () => controller.abort(), { once: true });
+  }
+  const interrupted = () => signal?.aborted;
 
   let res;
   try {
-    res = await fetch(`${host}/api/chat`, {
+    res = await fetch(`${host}/v1/chat/completions`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        model,
         messages,
-        format: RESPONSE_FORMAT,
+        response_format: ENVELOPE_FORMAT,
         stream: true,
-        options,
+        temperature: 0.1, // low: we want deterministic, well-formed envelopes
       }),
       signal: controller.signal,
     });
   } catch (err) {
     clearTimeout(timer);
     if (err.name === "AbortError") {
-      throw new LLMError(`Ollama at ${host} stalled (no data for ${timeoutMs}ms)`);
+      if (interrupted()) throw makeInterrupt();
+      throw new LLMError(`Engine at ${host} stalled (no data for ${timeoutMs}ms)`);
     }
-    throw new LLMError(
-      `Could not reach Ollama at ${host} — is it running? ("ollama serve"). ${err.message}`
-    );
+    throw new LLMError(`Could not reach the local engine at ${host}. ${err.message}`);
   }
 
   if (!res.ok) {
     clearTimeout(timer);
     const body = await res.text().catch(() => "");
-    throw new LLMError(`Ollama returned ${res.status}: ${body}`);
+    throw new LLMError(`Engine returned ${res.status}: ${body}`);
   }
 
   let content = "";
@@ -142,15 +141,17 @@ export async function chat({ host, model, messages, timeoutMs, onToken, perf }) 
       while ((nl = buffer.indexOf("\n")) !== -1) {
         const line = buffer.slice(0, nl).trim();
         buffer = buffer.slice(nl + 1);
-        if (!line) continue;
+        if (!line.startsWith("data:")) continue;
+        const payload = line.slice(5).trim();
+        if (payload === "[DONE]") continue;
         let obj;
         try {
-          obj = JSON.parse(line);
+          obj = JSON.parse(payload);
         } catch {
-          continue; // partial/garbled line; skip
+          continue; // partial/garbled SSE line; skip
         }
-        if (obj.error) throw new LLMError(`Ollama error: ${obj.error}`);
-        const piece = obj.message?.content || "";
+        if (obj.error) throw new LLMError(`Engine error: ${obj.error.message || obj.error}`);
+        const piece = obj.choices?.[0]?.delta?.content || "";
         if (piece) {
           content += piece;
           onToken?.(piece);
@@ -160,7 +161,8 @@ export async function chat({ host, model, messages, timeoutMs, onToken, perf }) 
   } catch (err) {
     if (err instanceof LLMError) throw err;
     if (err.name === "AbortError") {
-      throw new LLMError(`Ollama at ${host} stalled (no data for ${timeoutMs}ms)`);
+      if (interrupted()) throw makeInterrupt();
+      throw new LLMError(`Engine at ${host} stalled (no data for ${timeoutMs}ms)`);
     }
     throw new LLMError(`Stream from ${host} failed: ${err.message}`);
   } finally {
@@ -168,4 +170,11 @@ export async function chat({ host, model, messages, timeoutMs, onToken, perf }) 
   }
 
   return { role: "assistant", content };
+}
+
+// A distinct error the agent recognizes as a user interrupt (ESC), not a fault.
+function makeInterrupt() {
+  const e = new LLMError("interrupted");
+  e.interrupted = true;
+  return e;
 }

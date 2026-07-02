@@ -9,6 +9,7 @@ import * as lsTool from "./ls.js";
 import * as webFetchTool from "./webFetch.js";
 import * as webSearchTool from "./webSearch.js";
 import * as browserTool from "./browser.js";
+import { CODEGRAPH_TOOLS } from "../codegraph/tools.js";
 
 // mutating: true => gated by permission system before execution.
 export const TOOLS = {
@@ -23,6 +24,8 @@ export const TOOLS = {
   web_fetch: { ...webFetchTool, mutating: false },
   web_search: { ...webSearchTool, mutating: false },
   browser: { ...browserTool, mutating: false },
+  // Built-in code graph (tree-sitter) navigation tools.
+  ...CODEGRAPH_TOOLS,
 };
 
 export const TOOL_SCHEMAS = Object.values(TOOLS).map((t) => t.schema);

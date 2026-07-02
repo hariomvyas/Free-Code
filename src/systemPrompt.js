@@ -19,7 +19,10 @@ Rules:
   the tool and checking its result. Skipping the tool call and guessing the outcome is a
   serious error, even if your guess would be correct.
 - Use tools to inspect real files before answering; never guess file contents.
-- Prefer grep/glob to find things instead of reading whole directories.
+- To navigate code, prefer the code graph: code_search to locate a symbol, code_callers/
+  code_callees to trace how it's used, code_impact before changing a shared function, and
+  code_explore to read a definition with its callers/callees in one call. Fall back to grep/glob
+  for text/non-code files or when a symbol isn't found.
 - Prefer edit_file over write_file when changing an existing file.
 - Make old_string in edit_file long enough to be unique in the file.
 - Keep bash commands non-interactive and scoped to this project.

@@ -146,7 +146,7 @@ export class Tui {
     process.stdin.on("keypress", this._onKey);
     this._onResize = () => this.render();
     this.out.on("resize", this._onResize);
-    this.println(c("gray", "Type your request and press Enter. Ctrl+C to quit."));
+    this.println(c("gray", "Type your request and press Enter. ESC interrupts a running turn · Ctrl+C quits."));
     this.render();
   }
 
@@ -155,6 +155,17 @@ export class Tui {
     this.out.off("resize", this._onResize);
     if (process.stdin.isTTY) process.stdin.setRawMode(false);
     this.out.write(ANSI.showCursor + ANSI.altScreenOff);
+  }
+
+  // Temporarily hand the terminal back to plain stdin/stdout (e.g. to run the
+  // model wizard's readline). Halts the busy spinner so its timer can't repaint
+  // over the wizard. resume() re-enters the alt screen and redraws.
+  suspend() {
+    this._stopBusy();
+    this.stop();
+  }
+  resume() {
+    this.start();
   }
 
   // Append a line (may contain \n) to the transcript.
@@ -234,6 +245,15 @@ export class Tui {
 
     if (key.ctrl && key.name === "c") return this._quit();
 
+    // ESC interrupts the in-flight turn (like Claude Code), without quitting.
+    if (key.name === "escape") {
+      if (this.busy && this._turnAbort) {
+        this._turnAbort.abort();
+        this.println(c("yellow", "⎋ interrupting…"));
+      }
+      return;
+    }
+
     if (key.name === "pageup") {
       this.state.scroll += 5;
       return this.render();
@@ -299,11 +319,14 @@ export class Tui {
     this.println(c("cyan", "❯ ") + text);
     this.busy = true;
     this._startBusy();
+    // Fresh abort controller per turn so ESC can interrupt just this one.
+    this._turnAbort = new AbortController();
     try {
-      await this.onSubmit(text);
+      await this.onSubmit(text, this._turnAbort.signal);
     } catch (err) {
       this.println(c("red", "[error] " + (err?.message || err)));
     }
+    this._turnAbort = null;
     this._stopBusy();
     this.busy = false;
     this.render();

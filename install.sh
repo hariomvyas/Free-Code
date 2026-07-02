@@ -5,7 +5,6 @@ set -e
 
 REPO="https://github.com/hariomvyas/Free-Code.git"
 DIR="${FREECODE_DIR:-$HOME/.freecode-app}"
-MODEL="${FREECODE_MODEL:-qwen2.5-coder:3b}"
 
 echo "==> Installing Free Code"
 
@@ -33,13 +32,8 @@ if ! npm link >/dev/null 2>&1; then
   sudo npm link
 fi
 
-if command -v ollama >/dev/null 2>&1; then
-  echo "==> Pulling model $MODEL (this can take a few minutes)"
-  ollama pull "$MODEL" || echo "   (model pull failed — run 'ollama pull $MODEL' later)"
-else
-  echo "!! Ollama not found. Install it from https://ollama.com, then run: ollama pull $MODEL"
-fi
-
 echo ""
 echo "==> Done. Start it with:  fcode"
-echo "    Free Code auto-updates itself on future launches."
+echo "    On first launch, Free Code analyzes your machine, offers 3 model options,"
+echo "    and downloads the one you pick (plus its local engine) — no Ollama needed."
+echo "    It also auto-updates itself on future launches."

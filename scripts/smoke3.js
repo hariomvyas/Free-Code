@@ -1,9 +1,10 @@
 // Isolated check that a denied mutating tool call doesn't crash the agent loop.
 import { Agent } from "../src/agent.js";
-import { DEFAULT_CONFIG } from "../src/config.js";
+import { bootConfig } from "./_boot.js";
 
 const denyAll = { check: async () => false };
-const agent = new Agent({ config: DEFAULT_CONFIG, permissionGate: denyAll });
+const { config, engine } = await bootConfig();
+const agent = new Agent({ config, permissionGate: denyAll });
 
 const reply = await agent.send(
   "Run the bash command 'echo hello' and tell me its output.",
@@ -14,3 +15,4 @@ const reply = await agent.send(
 );
 
 console.log(`\nfinal reply:\n${reply}`);
+engine.stop();

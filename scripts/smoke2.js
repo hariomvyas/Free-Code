@@ -1,12 +1,13 @@
 // Exercises edit_file + grep + bash, and confirms a denied tool call doesn't crash the loop.
 import fs from "node:fs/promises";
 import { Agent } from "../src/agent.js";
-import { DEFAULT_CONFIG } from "../src/config.js";
+import { bootConfig } from "./_boot.js";
 
 await fs.writeFile("scratch_input.txt", "line one\nTODO fix this\nline three\n", "utf8");
 
 const denyBash = { check: async (name) => name !== "bash" };
-const agent = new Agent({ config: DEFAULT_CONFIG, permissionGate: denyBash });
+const { config, engine } = await bootConfig();
+const agent = new Agent({ config, permissionGate: denyBash });
 
 const task =
   "Use grep to find the line containing TODO in scratch_input.txt, then use edit_file to " +
@@ -21,3 +22,4 @@ const reply = await agent.send(task, {
 console.log(`\nfinal reply:\n${reply}\n`);
 console.log(`--- scratch_input.txt now ---`);
 console.log(await fs.readFile("scratch_input.txt", "utf8"));
+engine.stop();

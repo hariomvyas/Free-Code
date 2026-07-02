@@ -2,9 +2,11 @@
 
 # Free Code
 
-**A local, offline coding agent CLI — no API keys, no cloud, no bill.**
+**A local, offline coding agent CLI — no API keys, no cloud, no bill, no Ollama.**
 
-Runs entirely on your machine against a small open-source LLM served by [Ollama](https://ollama.com).
+Runs entirely on your machine against a small open-source LLM. Free Code is **self-contained**: it
+bundles its own inference engine (a prebuilt [llama.cpp](https://github.com/ggml-org/llama.cpp)
+binary it downloads for you) and one Qwen2.5-Coder model — nothing else to install.
 Built to work on boxes with as little as **8GB of RAM**.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -21,11 +23,12 @@ Built to work on boxes with as little as **8GB of RAM**.
 Free Code is a terminal coding agent in the same spirit as Claude Code — you talk to it in
 plain English, it reads your files, edits them, runs shell commands, and reports back — except
 the model runs **on your machine**, not in someone else's datacenter. Zero npm dependencies,
-zero telemetry, zero API keys.
+zero telemetry, zero API keys, and **no Ollama or other engine to install** — Free Code brings
+its own.
 
 ```
 $ fcode
-Free Code v0.1.0 — model: qwen2.5-coder:3b  host: http://127.0.0.1:11434
+Free Code v0.1.0 — model: Full · Qwen2.5-Coder 7B  engine: llama.cpp
 cwd: D:\projects\my-app
 
 you> find the function that handles login and add input validation
@@ -40,9 +43,11 @@ fcode> Added email/password validation to login() in src/auth.js.
 
 | | |
 |---|---|
-| 🧠 **Local model** | Runs on your own machine via Ollama — no API keys for the LLM |
-| 🪶 **Runs on 8GB RAM** | Default model is a 3B quantized coder model (~2GB on disk) |
+| 🧠 **Local model** | Runs on your own machine via a bundled llama.cpp engine — no Ollama, no API keys |
+| 🧭 **Guided setup** | First run analyzes your machine and offers 3 model tiers to pick from |
+| 🪶 **Runs on 8GB RAM** | Light tier is a 1.5B quantized coder model (~1GB on disk) |
 | 🛠️ **Rich toolset** | files, shell, search, **web search + fetch**, optional real browser |
+| 🕸️ **Code graph** | Built-in tree-sitter index — the agent navigates by callers/callees, not just grep |
 | 🌐 **Internet access** | `web_search` (no API key) and `web_fetch` read live web pages |
 | 🔌 **MCP servers** | Plug in any Model Context Protocol tool server |
 | 💾 **Sessions** | Auto-saved conversations you can list and resume |
@@ -51,7 +56,9 @@ fcode> Added email/password validation to login() in src/auth.js.
 | ✅ **Permission-gated** | Confirms before writes, edits, or shell commands — persists per project |
 | 📦 **Zero dependencies** | Pure Node.js standard library — nothing to `npm install`* |
 
-<sub>*the optional `browser` tool uses Playwright, installed only if you want JS-rendered browsing.</sub>
+<sub>*`package.json` has no dependencies. The llama.cpp engine, model, and tree-sitter code-graph
+runtime are downloaded assets (not npm packages); the optional `browser` tool uses Playwright,
+installed only if you want JS-rendered browsing.</sub>
 
 ### Tools
 
@@ -59,6 +66,7 @@ fcode> Added email/password validation to login() in src/auth.js.
 |---|---|
 | `read_file` / `write_file` / `edit_file` / `multi_edit` | Read and modify files |
 | `ls` / `glob` / `grep` | Explore and search the project |
+| `code_search` / `code_callers` / `code_callees` / `code_impact` / `code_explore` | Navigate code via the built-in code graph (see below) |
 | `bash` | Run shell commands (permission-gated) |
 | `web_search` | Search the web via DuckDuckGo (no API key) |
 | `web_fetch` | Fetch a URL and return readable text |
@@ -75,12 +83,38 @@ conversation's context small during big research or multi-step chunks. Subagents
 can't spawn their own subagents (no infinite recursion). You'll see
 `🤖 subagent: …` when one starts, with its steps indented (`⤷`).
 
+### Code graph
+
+Free Code ships with its own **code graph** — a semantic index of your project built
+with [tree-sitter](https://tree-sitter.github.io). Instead of blindly grepping, the agent
+navigates by real structure: definitions and the call edges between them.
+
+- **Languages:** JavaScript/TypeScript (+JSX/TSX), Python, Go, Rust.
+- **Built on start:** the graph is indexed when a session begins and updated incrementally
+  (only changed files are reparsed). Rebuild any time with `/index`.
+- **Self-contained:** the tree-sitter runtime + grammars are downloaded once (~7MB) into
+  `~/.freecode/grammars/` on first use — **no npm install, no build step.** The graph itself
+  is plain JSON in `.freecode/codegraph.json` (no SQLite).
+
+The agent gets five tools from it:
+
+| Tool | What it answers |
+|---|---|
+| `code_search` | Where is symbol X? (name → file:line, kind) |
+| `code_callers` | Who calls X? |
+| `code_callees` | What does X call? |
+| `code_impact` | If I change X, what's the blast radius? (transitive callers) |
+| `code_explore` | Show X's source + its callers and callees in one call |
+
+Peek at it yourself with `/graph <name>`.
+
 ## Interface
 
 `fcode` launches a **full-screen TUI** when run in a real terminal: a scrollable
 transcript, a fixed input bar with line editing and history (↑/↓), a live status
 line (spinner + elapsed + token count), `PgUp`/`PgDn` to scroll back, and inline
-permission prompts. `Ctrl+C` quits.
+permission prompts. **`ESC` interrupts** the current turn (stops the model mid-answer)
+without quitting; `Ctrl+C` quits.
 
 Prefer a plain scrolling REPL? Run `fcode --classic`. Piped/non-interactive input
 (`echo "..." | fcode`) automatically uses classic mode and processes each line.
@@ -88,7 +122,9 @@ Prefer a plain scrolling REPL? Run `fcode --classic`. Piped/non-interactive inpu
 ## Requirements
 
 - **[Node.js](https://nodejs.org) 18+**
-- **[Ollama](https://ollama.com)** installed and running
+- That's it. The inference engine and model are downloaded on first run — no Ollama, no Python,
+  nothing else to install. (You need a working internet connection **once**, for that first setup;
+  everything runs offline afterward.)
 
 ## Install
 
@@ -104,8 +140,9 @@ curl -fsSL https://raw.githubusercontent.com/hariomvyas/Free-Code/main/install.s
 irm https://raw.githubusercontent.com/hariomvyas/Free-Code/main/install.ps1 | iex
 ```
 
-This clones the repo, links the `fcode` command globally, and pulls the default
-model. After that, just run `fcode`.
+This clones the repo and links the `fcode` command globally. The **first time you run `fcode`**,
+a setup wizard analyzes your machine, offers three model tiers, and downloads your pick plus the
+llama.cpp engine. After that, just run `fcode`.
 
 ### Manual install
 
@@ -127,17 +164,31 @@ time with the `/update` command, or disable it with `FREECODE_NO_UPDATE=1` (or
 
 ## Setup
 
-Pull a coding model (one-time, ~2GB download):
+There's no separate setup step — it happens on your first run.
 
 ```bash
-ollama pull qwen2.5-coder:3b
+fcode
 ```
 
-Make sure Ollama is running:
+The **first time**, Free Code analyzes your machine and shows a picker like this:
 
-```bash
-ollama serve
 ```
+Free Code — first-time setup
+Detected: 15.8GB RAM · 12 CPU cores · NVIDIA GPU (6.0GB VRAM)
+Pick a model to install. It runs 100% locally — no Ollama, no cloud.
+
+  1. Light — Qwen2.5-Coder 1.5B (~1.1GB)
+     Fastest & lightest. Fine on 8GB RAM with no GPU.
+  2. Balanced — Qwen2.5-Coder 3B (~2GB)
+     Good all-rounder. Recommended for 16GB RAM.
+  3. Full — Qwen2.5-Coder 7B (~4.7GB)  ★ recommended
+     Most reliable at multi-file work. Best with a GPU or 16GB+ RAM.
+
+Choose 1-3 [3]:
+```
+
+Pick one and Free Code downloads it (plus the llama.cpp engine binary) into `~/.freecode/`. Every
+launch after that skips straight to a session. Change your mind later with the `/model` command.
 
 ## Run
 
@@ -145,17 +196,18 @@ ollama serve
 fcode
 ```
 
-That's it. `fcode` starts an interactive session in your current directory. Free Code checks
-that Ollama is reachable and the model is pulled before starting, and tells you exactly what
-to run if either is missing.
+`fcode` starts an interactive session in your current directory, booting its local engine
+automatically. No background service to start or manage.
 
 ### In-session commands
 
 | Command | Effect |
 |---|---|
-| `/model <name>` | Switch model for the rest of the session (must be installed) |
-| `/models` | List installed Ollama models |
-| `/gpu` | Show whether the current model is running on GPU or CPU |
+| `/model` | Re-run the model picker — switch tier, download if needed, restart the engine |
+| `/models` | List downloaded model files and the active one |
+| `/gpu` | Show the engine build (CPU/CUDA/Vulkan/Metal) and GPU offload |
+| `/index` | Rebuild the code graph now (shows symbol/edge counts) |
+| `/graph <name>` | Look up a symbol in the code graph + its callers/callees |
 | `/tools` | List all tools available (built-in + MCP) |
 | `/sessions` | List saved sessions |
 | `/resume <id>` | Resume a saved session |
@@ -163,53 +215,45 @@ to run if either is missing.
 | `/reset` | Clear conversation history, start fresh |
 | `exit` / `quit` | Quit |
 
-## Automatic model selection
+## Choosing & changing your model
 
-You don't have to pick a model. On startup Free Code scans your installed Ollama
-models and automatically uses the **strongest coder model you have**, in this order:
+The first-run wizard recommends a tier based on your detected RAM and GPU, but you pick. The three
+tiers are all [Qwen2.5-Coder](https://huggingface.co/Qwen) (Q4_K_M GGUF):
 
-```
-qwen2.5-coder:14b  →  qwen2.5-coder:7b  →  qwen2.5-coder:3b  →  qwen2.5-coder:1.5b
-```
+| Tier | Model | Size | Good for |
+|---|---|---|---|
+| **Light** | Qwen2.5-Coder 1.5B | ~1.1GB | 8GB RAM, no GPU. Fast, but skips steps on complex tasks. |
+| **Balanced** | Qwen2.5-Coder 3B | ~2.0GB | 16GB RAM. Solid all-rounder. |
+| **Full** ⭐ | Qwen2.5-Coder 7B | ~4.7GB | GPU or 16GB+ RAM. Most reliable at multi-file work. |
 
-So if you've pulled the 7B, `fcode` uses it; if you only have the 3B, it uses that.
-Pin a specific model any time with the `FREECODE_MODEL` environment variable.
+Switch tiers any time from inside a session with `/model` — it re-runs the picker, downloads the new
+model if needed, and restarts the engine. Only one model is active at a time.
 
 ## GPU acceleration
 
-Free Code uses **all the hardware you have**. By default it tells Ollama to offload
-every model layer that fits into GPU VRAM (`num_gpu: 999`, which Ollama safely caps
-to what actually fits) and to use all your CPU cores. A GPU makes it **5–15× faster**.
+On **macOS (Apple Silicon)** GPU acceleration works out of the box — the bundled build uses Metal,
+and Free Code offloads as many model layers as fit.
 
-Check whether your GPU is actually being used — inside a session, send one message,
-then run:
+On **Windows / Linux** the default bundled engine is a **CPU build** (it always runs, with no driver
+or runtime prerequisites). To use an NVIDIA or other GPU, opt into a GPU build before setup:
 
+```bash
+# NVIDIA (CUDA)
+FREECODE_ENGINE_VARIANT=cuda fcode
+# Any GPU (AMD / Intel / NVIDIA) via Vulkan
+FREECODE_ENGINE_VARIANT=vulkan fcode
 ```
-/gpu
-```
 
-If it says `100% CPU (GPU not used)` but you *have* a discrete GPU, your **GPU driver
-is almost certainly too old for Ollama's CUDA runtime**. This is the #1 cause of
-CPU-only inference. Fix it:
-
-**NVIDIA:**
-1. Check your driver: `nvidia-smi` — look at the `CUDA Version` in the top-right.
-   Ollama needs **CUDA 12+** (driver ≈ 527 or newer). If it shows 10.x/11.x, update.
-2. Download the latest Game Ready / Studio driver for your card from
-   [nvidia.com/Download](https://www.nvidia.com/Download/index.aspx), install, reboot.
-3. Re-run `nvidia-smi` — `CUDA Version` should now be `12.x` or higher.
-
-**AMD:** install the latest Adrenalin driver + make sure ROCm is supported for your card.
-
-After updating, `/gpu` should show a high `% on GPU`.
+Then run `/model` (or delete `~/.freecode/bin`) so Free Code re-downloads the matching engine. A GPU
+makes inference **5–15× faster**. Check what's in use inside a session with `/gpu`.
 
 ### Perf tuning (env vars)
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `FREECODE_NUM_GPU` | `999` | Model layers to offload to GPU (999 = as many as fit) |
-| `FREECODE_NUM_THREAD` | `0` (auto) | CPU threads to use |
-| `FREECODE_NUM_CTX` | `8192` | Context window size (bigger = more VRAM/RAM) |
+| `FREECODE_NUM_GPU` | `999` | Model layers to offload to GPU (`-ngl`; 999 = as many as fit) |
+| `FREECODE_NUM_THREAD` | `0` (auto) | CPU threads to use (`-t`) |
+| `FREECODE_NUM_CTX` | `8192` | Context window size (`-c`; bigger = more VRAM/RAM) |
 
 ## Configuration
 
@@ -217,30 +261,14 @@ Set these as environment variables before running `fcode`:
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `FREECODE_MODEL` | _(auto-selected)_ | Force a specific Ollama model |
-| `FREECODE_HOST` | `http://127.0.0.1:11434` | Ollama server address |
+| `FREECODE_ENGINE_VARIANT` | `cpu` (Win/Linux), `metal` (macOS) | llama.cpp build: `cpu` / `cuda` / `vulkan` |
+| `FREECODE_HOME` | `~/.freecode` | Where the engine binary + models are stored |
 
-```bash
-FREECODE_MODEL=qwen2.5-coder:7b fcode
-```
+The model isn't set by env var — pick it in the first-run wizard or with `/model`.
 
-## Picking a model for your RAM budget
-
-| RAM available | Recommended model | Notes |
-|---|---|---|
-| 8GB (CPU only) | `qwen2.5-coder:3b` | ~2GB on disk, fastest, fits tight RAM — but skips steps on complex multi-file tasks |
-| 16GB+ or 8GB GPU | **`qwen2.5-coder:7b`** ⭐ | Reliably builds complete multi-file solutions; slower per token on CPU |
-
-> **Note:** the 3B model is light and fast but will sometimes skip steps or answer
-> without actually running a tool on complex, multi-part tasks. If it isn't building
-> what you ask, pull the 7B — it's dramatically more reliable at multi-step work:
-> ```bash
-> ollama pull qwen2.5-coder:7b
-> ```
-
-Avoid "thinking"/hybrid-reasoning models (e.g. `qwen3`) for this use case — they burn hundreds
-of extra tokens reasoning before every single tool call, which makes the agent loop painfully
-slow on CPU-only hardware.
+> **Note:** the 1.5B/3B tiers are light and fast but will sometimes skip steps or answer without
+> actually running a tool on complex, multi-part tasks. If a smaller model isn't building what you
+> ask, switch to the 7B (`/model`) — it's dramatically more reliable at multi-step work.
 
 ## How it works
 
@@ -248,7 +276,7 @@ slow on CPU-only hardware.
 you type a request
       │
       ▼
- system prompt + conversation ──▶ local model (via Ollama)
+ system prompt + conversation ──▶ bundled llama.cpp engine (local llama-server)
                                         │
                           model replies with strict JSON:
                           {"tool": "...", "arguments": {...}, "final_answer": "..."}
@@ -267,10 +295,10 @@ you type a request
 ```
 
 Small local models are unreliable at native OpenAI-style function calling — tested and
-confirmed during development. Free Code instead uses Ollama's JSON-schema-constrained
-output mode to force every model response into a strict, parseable envelope, which is
-far more reliable on 3B-class models than hoping the model's `tool_calls` field populates
-correctly.
+confirmed during development. Free Code instead uses llama.cpp's constrained decoding
+(a JSON-schema `response_format`, compiled to a GBNF grammar) to force every model response
+into a strict, parseable envelope, which is far more reliable on 1.5B–7B models than hoping
+the model's `tool_calls` field populates correctly.
 
 Responses are **streamed live** — you see a spinner with elapsed time and token
 count while the model thinks, each tool call as it happens (`🔧 write_file …`),
@@ -332,9 +360,23 @@ You'll see `⚠ diagnostics: …` in the output when a check fails.
 bin/freecode.js      entrypoint
 src/cli.js           interactive REPL + live display wiring
 src/agent.js         tool-call loop
-src/llm.js           streaming Ollama client
-src/ui.js            spinner + tool-activity display
-src/config.js        auto model-selection + perf knobs
+src/llm.js           streaming client for the local llama-server (OpenAI API)
+src/engine/          bundled inference engine (replaces Ollama):
+  ├ index.js         first-run wizard + ensureEngineReady
+  ├ system.js        RAM/CPU/GPU detection
+  ├ models.js        the one model family + 3 tiers + recommendation
+  ├ platform.js      resolve the right llama.cpp release asset
+  ├ download.js      HTTPS download (progress) + pure-JS zip extractor
+  ├ server.js        Engine: spawn + health-check llama-server
+  └ paths.js/state.js  ~/.freecode layout + engine.json
+src/codegraph/       built-in tree-sitter code graph:
+  ├ runtime.js       download + init tree-sitter wasm runtime/grammars
+  ├ grammars.js      language catalog + asset URLs
+  ├ extract.js       per-language def + call-site extraction
+  ├ build.js         walk project → nodes + edges (incremental)
+  ├ query.js         search / callers / callees / impact / explore
+  └ tools.js         the code_* agent tools + build/refresh
+src/config.js        perf knobs (→ llama-server flags)
 src/session.js       session persistence
 src/mcp.js           MCP stdio client
 src/toolRegistry.js  built-in + MCP tool registry
@@ -356,9 +398,12 @@ src/tools/           files, shell, search, ls, web_search, web_fetch, browser
 - [x] Diagnostics after edits
 - [x] Full-screen TUI
 - [x] Context compaction for long sessions
-- [x] One-line install script (auto-pulls model on first run)
+- [x] One-line install script
 - [x] Auto-update on launch
 - [x] Subagents (task delegation)
+- [x] Self-contained engine — bundled llama.cpp, no Ollama
+- [x] Guided first-run setup (system analysis → pick 1 of 3 model tiers)
+- [x] Built-in tree-sitter code graph (search / callers / callees / impact / explore)
 
 ## Contributing
 

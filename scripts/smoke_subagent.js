@@ -2,15 +2,16 @@
 // that does real work and reports back; recursion is disabled for the child.
 import fs from "node:fs/promises";
 import { Agent } from "../src/agent.js";
-import { DEFAULT_CONFIG } from "../src/config.js";
+import { bootConfig } from "./_boot.js";
 
 await fs.writeFile("subagent_probe.txt", "the secret code is BANANA42\n");
 
-const agent = new Agent({ config: DEFAULT_CONFIG, permissionGate: { check: async () => true } });
+const { config, engine } = await bootConfig();
+const agent = new Agent({ config, permissionGate: { check: async () => true } });
 
 // Sanity: parent advertises task; child would not.
 console.log("parent has task tool:", agent._describeTools().includes("task("));
-const child = new Agent({ config: DEFAULT_CONFIG, permissionGate: { check: async () => true }, allowSubagents: false });
+const child = new Agent({ config, permissionGate: { check: async () => true }, allowSubagents: false });
 console.log("child has task tool:", child._describeTools().includes("task("));
 
 let sawSub = false;
@@ -31,3 +32,4 @@ console.log("mentions BANANA42:", reply.includes("BANANA42"));
 console.log("\nRESULT:", sawSub && reply.includes("BANANA42") ? "PASS" : "PARTIAL/FAIL");
 
 await fs.rm("subagent_probe.txt", { force: true });
+engine.stop();

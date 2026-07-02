@@ -2,8 +2,9 @@
 // then verifies the transcript was summarized down and the session still works.
 import { Agent } from "../src/agent.js";
 import { DEFAULT_CONFIG } from "../src/config.js";
+import { bootConfig } from "./_boot.js";
 
-const config = { ...DEFAULT_CONFIG, perf: { ...DEFAULT_CONFIG.perf, num_ctx: 1024 } };
+const { config, engine } = await bootConfig({ perf: { ...DEFAULT_CONFIG.perf, num_ctx: 1024 } });
 const agent = new Agent({ config, permissionGate: { check: async () => true } });
 
 // Pad the history with bulky prior turns so the estimate crosses the threshold.
@@ -27,3 +28,4 @@ console.log(`messages: ${before} -> ${after}  | tokens ~${beforeTokens} -> ~${ag
 console.log(`summary present: ${agent.session.messages.some((m) => m.content.startsWith("[earlier conversation summary]"))}`);
 console.log(`reply: ${reply.slice(0, 60)}`);
 console.log(`\nRESULT: ${compacted > 0 && after < before ? "PASS" : "FAIL"}`);
+engine.stop();

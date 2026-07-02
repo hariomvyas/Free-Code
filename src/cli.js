@@ -1,21 +1,26 @@
 import readline from "node:readline/promises";
+import fs from "node:fs/promises";
 import { stdin, stdout } from "node:process";
-import { DEFAULT_CONFIG, pickModel } from "./config.js";
+import { DEFAULT_CONFIG } from "./config.js";
 import { PermissionGate } from "./permission.js";
 import { Agent } from "./agent.js";
 import { Session } from "./session.js";
 import { ToolRegistry } from "./toolRegistry.js";
 import { spawnSync } from "node:child_process";
-import { LLMError, checkOllama, runningModels } from "./llm.js";
+import { LLMError, engineProps } from "./llm.js";
+import { ensureEngineReady } from "./engine/index.js";
+import { MODELS_DIR } from "./engine/paths.js";
+import { buildAndRefresh } from "./codegraph/tools.js";
+import { search as cgSearch, callers as cgCallers, callees as cgCallees } from "./codegraph/query.js";
 import { Spinner, printToolCall, printToolResult, printAnswer, printBanner, color } from "./ui.js";
 import { Tui, c } from "./tui.js";
 import { autoUpdate, entryScript } from "./update.js";
 
-const COMMANDS = "/model  /models  /gpu  /tools  /update  /sessions  /resume <id>  /reset  exit";
+const COMMANDS = "/model  /models  /gpu  /index  /graph <name>  /tools  /update  /sessions  /resume <id>  /reset  exit";
 
 // Handles slash commands + exit. Returns "quit", "handled", or "pass".
 // `print(text)` writes a line to the active surface (console or TUI).
-async function handleCommand(input, { config, registry, holder, permissionGate, print }) {
+async function handleCommand(input, { config, registry, holder, permissionGate, print, ui }) {
   if (input === "exit" || input === "quit") return "quit";
 
   if (input === "/sessions") {
@@ -53,33 +58,83 @@ async function handleCommand(input, { config, registry, holder, permissionGate, 
     return "handled";
   }
   if (input === "/models") {
-    const s = await checkOllama(config.host);
-    print(color("gray", `installed: ${s.models.join(", ") || "none"}`));
+    let files = [];
+    try {
+      files = (await fs.readdir(MODELS_DIR)).filter((f) => f.endsWith(".gguf"));
+    } catch {}
+    print(color("gray", `installed models: ${files.join(", ") || "none"}`));
+    print(color("gray", `active: ${config.model}   (use /model to change)`));
     return "handled";
   }
   if (input === "/gpu") {
-    const loaded = await runningModels(config.host);
-    if (!loaded.length) print(color("gray", "no model loaded yet — send a message first, then /gpu"));
-    else {
-      for (const m of loaded) {
-        const pct = m.size ? Math.round((m.sizeVram / m.size) * 100) : 0;
-        print(color("gray", `${m.name}: `) + (pct === 0 ? color("yellow", "100% CPU (GPU not used)") : color("green", `${pct}% on GPU`)));
-      }
-      if (loaded.every((m) => m.sizeVram === 0))
-        print(color("yellow", "→ GPU idle. Update your GPU driver (README: GPU acceleration)."));
+    const cfg = holder.engineConfig || {};
+    const variant = cfg.variant || "cpu";
+    if (variant === "cpu") {
+      print(color("yellow", "engine build: CPU-only (no GPU offload)."));
+      print(color("gray", "For GPU acceleration, reinstall with FREECODE_ENGINE_VARIANT=cuda (NVIDIA) or vulkan, then /model."));
+    } else {
+      const ngl = config.perf?.num_gpu ?? 999;
+      print(color("green", `engine build: ${variant} · offloading up to ${ngl} layers to GPU.`));
+    }
+    const props = await engineProps(config.host);
+    if (props?.default_generation_settings?.n_ctx)
+      print(color("gray", `context: ${props.default_generation_settings.n_ctx} tokens`));
+    return "handled";
+  }
+  if (input === "/model") {
+    // Re-run the setup wizard to pick/install a different model, then restart
+    // the engine and rebuild the agent against it. The wizard needs stdin: in
+    // the TUI we suspend it and run on the bare terminal; in classic we hand the
+    // wizard the existing readline so a second reader doesn't fight for input.
+    if (!stdin.isTTY) {
+      print(color("yellow", "run /model in an interactive terminal to switch models"));
+      return "handled";
+    }
+    try {
+      ui?.suspend?.();
+      holder.engine?.stop();
+      const { engine, engineConfig, modelName } = await ensureEngineReady({
+        perf: config.perf,
+        force: true,
+        ask: ui?.ask,
+      });
+      holder.engine = engine;
+      holder.engineConfig = engineConfig;
+      config.host = engine.baseUrl;
+      config.model = modelName;
+      holder.agent = new Agent({ config, permissionGate, toolRegistry: registry });
+      print(color("green", `(switched to ${modelName})`));
+    } catch (err) {
+      print(color("yellow", `model switch failed: ${err.message}`));
+    } finally {
+      ui?.resume?.();
     }
     return "handled";
   }
-  if (input.startsWith("/model ")) {
-    const next = input.slice("/model ".length).trim();
-    const s = await checkOllama(config.host);
-    if (!s.models.includes(next)) {
-      print(color("yellow", `model "${next}" not installed. pull it: ollama pull ${next}`));
+  if (input === "/index") {
+    try {
+      const s = await buildAndRefresh({ root: process.cwd(), onLog: (m) => print(color("gray", `  ${m}`)) });
+      print(color("green", `code graph: ${s.nodes} symbols, ${s.edges} edges (${s.files} files, ${s.parsed} parsed, ${s.reused} cached, ${s.ms}ms)`));
+    } catch (err) {
+      print(color("yellow", `indexing failed: ${err.message}`));
+    }
+    return "handled";
+  }
+  if (input.startsWith("/graph ")) {
+    const name = input.slice("/graph ".length).trim();
+    const hits = await cgSearch(name, 8);
+    if (!hits.length) {
+      print(color("gray", `no symbol matching "${name}" — try /index to (re)build the graph`));
       return "handled";
     }
-    config.model = next;
-    holder.agent.config.model = next;
-    print(color("gray", `(model set to ${next})`));
+    for (const h of hits.slice(0, 5)) {
+      print(color("cyan", `${h.name}`) + color("gray", ` ${h.kind} · ${h.file}:${h.line}`));
+    }
+    const top = hits[0].name;
+    const cr = await cgCallers(top);
+    const ce = await cgCallees(top);
+    print(color("gray", `callers of ${top}: `) + (cr.callers.map((c) => c.name).join(", ") || "none"));
+    print(color("gray", `${top} calls: `) + (ce.callees.map((c) => c.name).join(", ") || "none"));
     return "handled";
   }
   return "pass";
@@ -87,21 +142,36 @@ async function handleCommand(input, { config, registry, holder, permissionGate, 
 
 async function setup() {
   const config = { ...DEFAULT_CONFIG };
-  const status = await checkOllama(config.host);
-  if (!status.reachable) {
-    console.error(`Free Code can't reach Ollama at ${config.host}.`);
-    console.error(`Start it first: ollama serve (or launch the Ollama app), then run fcode again.`);
+  // Ensure the bundled llama.cpp engine + a chosen model are installed (running
+  // the first-run wizard if not), then boot llama-server and point config at it.
+  let engine, engineConfig, modelName;
+  try {
+    ({ engine, engineConfig, modelName } = await ensureEngineReady({ perf: config.perf }));
+  } catch (err) {
+    console.error(color("red", `\nFree Code couldn't start its engine: ${err.message}`));
     process.exit(1);
   }
-  config.model = pickModel(status.models);
-  if (!status.models.includes(config.model)) {
-    console.error(`Model "${config.model}" isn't pulled yet.  Get it: ollama pull ${config.model}`);
-    console.error(`(or set FREECODE_MODEL to one you have: ${status.models.join(", ") || "none installed"})`);
-    process.exit(1);
-  }
+  config.host = engine.baseUrl;
+  config.model = modelName;
+
   const registry = new ToolRegistry();
   const mcpSummary = await registry.loadMcpServers((line) => console.log(color("gray", `  ${line}`)));
-  return { config, registry, mcpSummary };
+
+  // Build the code graph so the code_* tools work from the first message. First
+  // run downloads the tree-sitter runtime + grammars (~7MB); later runs are
+  // incremental and fast. Non-fatal — a failure just leaves the graph empty.
+  try {
+    process.stdout.write(color("gray", "indexing code graph…\n"));
+    const gs = await buildAndRefresh({
+      root: process.cwd(),
+      onLog: (m) => process.stdout.write(color("gray", `  ${m}\n`)),
+    });
+    console.log(color("gray", `  code graph: ${gs.nodes} symbols · ${gs.edges} edges · ${gs.files} files (${gs.ms}ms)`));
+  } catch (err) {
+    console.log(color("yellow", `  code graph unavailable: ${err.message}`));
+  }
+
+  return { config, registry, mcpSummary, engine, engineConfig };
 }
 
 export async function main() {
@@ -118,20 +188,28 @@ export async function main() {
   }
 
   const classic = process.argv.includes("--classic") || !process.stdout.isTTY;
-  const { config, registry, mcpSummary } = await setup();
-  if (classic) return runClassic({ config, registry, mcpSummary });
+  const ctx = await setup();
+  // Always shut the llama-server process down when Free Code exits.
+  const stopEngine = () => ctx.engine?.stop();
+  process.on("exit", stopEngine);
+  process.on("SIGINT", () => {
+    stopEngine();
+    process.exit(0);
+  });
+
+  if (classic) return runClassic(ctx);
   try {
-    return await runTui({ config, registry, mcpSummary });
+    return await runTui(ctx);
   } catch (err) {
     // If the TUI fails to init for any reason, fall back to the classic REPL.
     console.error(color("yellow", `TUI unavailable (${err.message}); falling back to classic mode.`));
-    return runClassic({ config, registry, mcpSummary });
+    return runClassic(ctx);
   }
 }
 
 // ---- Full-screen TUI mode ----
-async function runTui({ config, registry, mcpSummary }) {
-  const holder = {};
+async function runTui({ config, registry, mcpSummary, engine, engineConfig }) {
+  const holder = { engine, engineConfig };
   let tuiRef;
   const permissionGate = new PermissionGate(async (label, preview) => {
     tuiRef.println(color("gray", preview));
@@ -142,26 +220,32 @@ async function runTui({ config, registry, mcpSummary }) {
 
   const tui = new Tui({
     title: `Free Code · ${config.model}${mcpSummary.length ? " · mcp:" + mcpSummary.map((s) => s.server).join(",") : ""}`,
-    onSubmit: async (input) => {
+    onSubmit: async (input, signal) => {
       const res = await handleCommand(input, {
         config,
         registry,
         holder,
         permissionGate,
         print: (t) => tui.println(t),
+        // For /model: suspend the TUI so the wizard's readline owns the terminal.
+        ui: { suspend: () => tui.suspend(), resume: () => tui.resume() },
       });
       if (res === "quit") return tui._quit();
       if (res === "handled") return;
 
-      const reply = await holder.agent.send(input, {
-        onToken: (_p, count) => tui.setTokens(count),
-        onToolCall: (name, args) => tui.println(fmtToolCall(name, args)),
-        onToolResult: (name, resultText, ok) => tui.println(fmtToolResult(name, resultText, ok)),
-        onDiagnostics: (_n, errors) => tui.println(c("yellow", "  ⚠ " + errors.split("\n")[0])),
-        onDenied: (name) => tui.println(c("yellow", "  ✗ " + name + " denied")),
-        onCompact: (n) => tui.println(color("gray", `  ⟳ compacting ${n} older messages…`)),
-        onSubagent: (desc) => tui.println(c("blue", "🤖 subagent: ") + desc),
-      });
+      const reply = await holder.agent.send(
+        input,
+        {
+          onToken: (_p, count) => tui.setTokens(count),
+          onToolCall: (name, args) => tui.println(fmtToolCall(name, args)),
+          onToolResult: (name, resultText, ok) => tui.println(fmtToolResult(name, resultText, ok)),
+          onDiagnostics: (_n, errors) => tui.println(c("yellow", "  ⚠ " + errors.split("\n")[0])),
+          onDenied: (name) => tui.println(c("yellow", "  ✗ " + name + " denied")),
+          onCompact: (n) => tui.println(color("gray", `  ⟳ compacting ${n} older messages…`)),
+          onSubagent: (desc) => tui.println(c("blue", "🤖 subagent: ") + desc),
+        },
+        signal
+      );
       tui.println(c("green", "◆ ") + reply);
     },
   });
@@ -214,7 +298,7 @@ async function readAllStdin() {
   return data;
 }
 
-async function runClassic({ config, registry, mcpSummary }) {
+async function runClassic({ config, registry, mcpSummary, engine, engineConfig }) {
   const interactive = process.stdin.isTTY;
   const rl = interactive ? readline.createInterface({ input: stdin, output: stdout }) : null;
 
@@ -228,7 +312,7 @@ async function runClassic({ config, registry, mcpSummary }) {
     }
   });
   await permissionGate.load();
-  const holder = { agent: new Agent({ config, permissionGate, toolRegistry: registry }) };
+  const holder = { engine, engineConfig, agent: new Agent({ config, permissionGate, toolRegistry: registry }) };
 
   printBanner({
     version: "0.1.0",
@@ -241,7 +325,16 @@ async function runClassic({ config, registry, mcpSummary }) {
   console.log(color("gray", "commands: ") + color("dim", COMMANDS) + "\n");
 
   const runTurn = async (input) => {
-    const res = await handleCommand(input, { config, registry, holder, permissionGate, print: (t) => console.log(t) });
+    const res = await handleCommand(input, {
+      config,
+      registry,
+      holder,
+      permissionGate,
+      print: (t) => console.log(t),
+      // Classic already owns stdin via `rl`; hand it to the /model wizard so a
+      // second readline doesn't fight for input.
+      ui: rl ? { ask: (q) => rl.question(q) } : {},
+    });
     if (res === "quit") return "quit";
     if (res === "handled") return "handled";
     const hooks = runTurnHooks();

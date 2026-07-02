@@ -51,7 +51,7 @@ export class Agent {
     return isMutating(name);
   }
 
-  async send(userText, hooks = {}) {
+  async send(userText, hooks = {}, signal = null) {
     const { onThinkStart, onToken, onThinkEnd, onToolCall, onToolResult, onDenied, onDiagnostics, onCompact } = hooks;
 
     this.messages.push({ role: "user", content: userText });
@@ -59,19 +59,28 @@ export class Agent {
 
     try {
       for (let i = 0; i < this.config.maxIterations; i++) {
+        if (signal?.aborted) return "⎋ interrupted";
         onThinkStart?.(i + 1);
         let tokenCount = 0;
-        const assistantMsg = await chat({
-          host: this.config.host,
-          model: this.config.model,
-          messages: this.messages,
-          timeoutMs: this.config.requestTimeoutMs,
-          perf: this.config.perf,
-          onToken: (piece) => {
-            tokenCount++;
-            onToken?.(piece, tokenCount);
-          },
-        });
+        let assistantMsg;
+        try {
+          assistantMsg = await chat({
+            host: this.config.host,
+            model: this.config.model,
+            messages: this.messages,
+            timeoutMs: this.config.requestTimeoutMs,
+            perf: this.config.perf,
+            signal,
+            onToken: (piece) => {
+              tokenCount++;
+              onToken?.(piece, tokenCount);
+            },
+          });
+        } catch (err) {
+          onThinkEnd?.(tokenCount);
+          if (err.interrupted || signal?.aborted) return "⎋ interrupted";
+          throw err;
+        }
         onThinkEnd?.(tokenCount);
         this.messages.push(assistantMsg);
         await this._log(assistantMsg);

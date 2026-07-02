@@ -1,5 +1,6 @@
 node_modules/
 .freecode/
 .claude/
+.codegraph/
 .last_update_check
 smoke_test_output.txt

@@ -3,7 +3,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { Agent } from "../src/agent.js";
-import { DEFAULT_CONFIG } from "../src/config.js";
+import { bootConfig } from "./_boot.js";
 import { Spinner, printToolCall, printToolResult, printAnswer } from "../src/ui.js";
 
 const workdir = path.join(process.cwd(), "build_test");
@@ -12,7 +12,8 @@ await fs.mkdir(workdir, { recursive: true });
 process.chdir(workdir);
 
 const autoApprove = { check: async () => true };
-const agent = new Agent({ config: DEFAULT_CONFIG, permissionGate: autoApprove });
+const { config, engine } = await bootConfig();
+const agent = new Agent({ config, permissionGate: autoApprove });
 
 const task =
   "Build a tiny Node.js project in the current directory:\n" +
@@ -22,7 +23,7 @@ const task =
   "4. Run 'node main.js' with the bash tool and confirm it prints 5.\n" +
   "Do each step with the appropriate tool, then give a final answer.";
 
-console.log(`MODEL: ${DEFAULT_CONFIG.model}\n`);
+console.log(`MODEL: ${config.model}\n`);
 
 let spinner = null;
 const t0 = Date.now();
@@ -48,3 +49,4 @@ for (const f of ["sum.js", "main.js", "package.json"]) {
   console.log(`\n--- ${f} ${content === null ? "[MISSING]" : ""} ---`);
   if (content !== null) console.log(content.trim());
 }
+engine.stop();

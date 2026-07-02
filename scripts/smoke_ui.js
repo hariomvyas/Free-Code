@@ -3,11 +3,12 @@
 // path runs without error and files actually get built.
 import fs from "node:fs/promises";
 import { Agent } from "../src/agent.js";
-import { DEFAULT_CONFIG } from "../src/config.js";
+import { bootConfig } from "./_boot.js";
 import { Spinner, printToolCall, printToolResult, printAnswer } from "../src/ui.js";
 
 const autoApprove = { check: async () => true };
-const agent = new Agent({ config: DEFAULT_CONFIG, permissionGate: autoApprove });
+const { config, engine } = await bootConfig();
+const agent = new Agent({ config, permissionGate: autoApprove });
 
 let spinner = null;
 const reply = await agent.send(
@@ -32,3 +33,4 @@ printAnswer(reply);
 const exists = await fs.readFile("ui_test.txt", "utf8").catch(() => null);
 console.log(`\nFILE CHECK: ${exists === null ? "MISSING" : JSON.stringify(exists)}`);
 await fs.rm("ui_test.txt", { force: true });
+engine.stop();

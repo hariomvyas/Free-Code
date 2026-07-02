@@ -1,10 +1,11 @@
 // Verifies session save/list/load round-trip.
 import { Agent } from "../src/agent.js";
 import { Session } from "../src/session.js";
-import { DEFAULT_CONFIG } from "../src/config.js";
+import { bootConfig } from "./_boot.js";
 
 const autoApprove = { check: async () => true };
-const agent = new Agent({ config: DEFAULT_CONFIG, permissionGate: autoApprove });
+const { config, engine } = await bootConfig();
+const agent = new Agent({ config, permissionGate: autoApprove });
 const id = agent.session.id;
 
 await agent.send("What is 2+2? Answer in one short sentence, no tools.", {});
@@ -18,3 +19,4 @@ console.log(`in /sessions list: ${found ? "YES" : "NO"} — title: ${found?.titl
 const reloaded = await Session.load(id);
 console.log(`reloaded messages: ${reloaded.messages.length}`);
 console.log(`reload matches: ${reloaded.messages.length === agent.session.messages.length ? "PASS" : "FAIL"}`);
+engine.stop();
